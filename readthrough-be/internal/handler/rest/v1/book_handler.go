@@ -118,7 +118,42 @@ func (h *BookHandler) GetContent(c *gin.Context) {
 	}
 	defer reader.Close()
 
+	c.Header("Cache-Control", "private, max-age=31536000, immutable")
 	c.DataFromReader(http.StatusOK, size, contentType, reader, nil)
+}
+
+func (h *BookHandler) GetDownloadURL(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, dto.ResponseUnauthorized(nil))
+		return
+	}
+	userID := userIDVal.(uuid.UUID)
+
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ResponseBadRequest(err))
+		return
+	}
+
+	book, err := h.bookSvc.GetBookByID(c.Request.Context(), id, userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ResponseNotFound(err))
+		return
+	}
+
+	fileName := filepath.Base(book.FilePath)
+	urlStr, isPresigned, err := h.bookSvc.GetBookDownloadURL(c.Request.Context(), fileName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.ResponseOK(gin.H{
+		"url":          urlStr,
+		"is_presigned": isPresigned,
+	}))
 }
 
 func (h *BookHandler) UpdateProgress(c *gin.Context) {

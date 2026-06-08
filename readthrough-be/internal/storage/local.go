@@ -64,3 +64,8 @@ func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 	filePath := filepath.Join(s.uploadDir, key)
 	return os.Remove(filePath)
 }
+
+// GetPresignedURL returns empty values since LocalStorage does not support pre-signed URLs.
+func (s *LocalStorage) GetPresignedURL(ctx context.Context, key string) (string, bool, error) {
+	return "", false, nil
+}

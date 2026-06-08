@@ -18,6 +18,7 @@ type IBookService interface {
 	ListBooks(ctx context.Context, userID uuid.UUID, search string) ([]entity.Book, error)
 	GetBookByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*entity.Book, error)
 	DownloadBook(ctx context.Context, key string) (io.ReadCloser, int64, string, error)
+	GetBookDownloadURL(ctx context.Context, key string) (string, bool, error)
 	DeleteBook(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error
 }
@@ -107,6 +108,10 @@ func (s *BookService) GetBookByID(ctx context.Context, id uuid.UUID, userID uuid
 
 func (s *BookService) DownloadBook(ctx context.Context, key string) (io.ReadCloser, int64, string, error) {
 	return s.store.Download(ctx, key)
+}
+
+func (s *BookService) GetBookDownloadURL(ctx context.Context, key string) (string, bool, error) {
+	return s.store.GetPresignedURL(ctx, key)
 }
 
 func (s *BookService) UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error {

@@ -342,9 +342,30 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       setLoadingContent(true);
       setContentError('');
       try {
-        const res = await fetchWithAuth(`/api/v1/books/${book.id}/content`);
-        if (!res.ok) throw new Error('Failed to load this book content.');
-        const blob = await res.blob();
+        // 1. Get the download URL (either R2 pre-signed or backend local path)
+        const urlRes = await fetchWithAuth(`/api/v1/books/${book.id}/download-url`);
+        if (!urlRes.ok) throw new Error('Failed to retrieve download link.');
+        const urlJson = await urlRes.json();
+        
+        if (!urlJson.succeeded || !urlJson.data?.url) {
+          throw new Error('Invalid download response.');
+        }
+
+        const { url, is_presigned } = urlJson.data;
+        let fileRes;
+
+        // 2. Fetch the file based on whether it is a pre-signed Cloud URL or Local fallback
+        if (is_presigned) {
+          // Direct download from Cloudflare R2 (WITHOUT backend Authorization header to avoid signature issues)
+          fileRes = await fetch(url);
+        } else {
+          // Local fallback download (WITH backend Authorization header)
+          fileRes = await fetchWithAuth(`/api/v1/books/${book.id}/content`);
+        }
+
+        if (!fileRes.ok) throw new Error('Failed to download book content file.');
+        const blob = await fileRes.blob();
+        
         if (!active) return;
         localBlobUrl = URL.createObjectURL(blob);
         setBlobUrl(localBlobUrl);
