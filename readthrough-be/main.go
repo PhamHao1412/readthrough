@@ -10,6 +10,7 @@ import (
 	v1 "readthrough-be/internal/handler/rest/v1"
 	"readthrough-be/internal/repository"
 	"readthrough-be/internal/service"
+	"readthrough-be/internal/storage"
 	"readthrough-be/pkg/logger"
 	"readthrough-be/pkg/security"
 
@@ -57,6 +58,20 @@ func main() {
 	//	log.Fatalf("failed to auto migrate and seed database: %v", err)
 	//}
 
+	// Storage setup (Cloudflare R2 or Local fallback)
+	var store storage.Storage
+	if cfg.R2AccessKeyID != "" && cfg.R2SecretAccessKey != "" && cfg.R2AccountID != "" && cfg.R2BucketName != "" {
+		r2Store, err := storage.NewR2Storage(cfg.R2AccessKeyID, cfg.R2SecretAccessKey, cfg.R2AccountID, cfg.R2BucketName)
+		if err != nil {
+			log.Fatalf("failed to initialize R2 storage: %v", err)
+		}
+		store = r2Store
+		log.Println("Storage initialized: Cloudflare R2")
+	} else {
+		store = storage.NewLocalStorage(cfg.UploadDir)
+		log.Println("Storage initialized: Local Filesystem")
+	}
+
 	// Repositories
 	baseRepo := repository.NewBaseRepository(dbConn)
 	bookRepo := repository.NewBookRepository(dbConn)
@@ -65,7 +80,7 @@ func main() {
 	tokenRepo := repository.NewRefreshTokenRepository(dbConn)
 
 	// Services
-	bookSvc := service.NewBookService(baseRepo, bookRepo)
+	bookSvc := service.NewBookService(baseRepo, bookRepo, store)
 	translateSvc := service.NewTranslateService()
 	vocabSvc := service.NewVocabularyService(vocabRepo)
 	authSvc := service.NewAuthService(userRepo, tokenRepo)

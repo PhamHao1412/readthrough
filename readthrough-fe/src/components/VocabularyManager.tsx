@@ -103,7 +103,7 @@ export const VocabularyManager: React.FC<VocabularyManagerProps> = ({ books, onS
       {/* Controls: Search and Book Filter */}
       <div className="vocab-filters">
         <div className="search-input-wrapper">
-          <Search size={16} className="search-icon" />
+          <Search size={16} className="vocab-filter-icon" />
           <input
             type="text"
             placeholder="Search vocabulary or translation..."
@@ -113,7 +113,7 @@ export const VocabularyManager: React.FC<VocabularyManagerProps> = ({ books, onS
         </div>
 
         <div className="filter-select-wrapper">
-          <BookOpen size={16} className="filter-icon" />
+          <BookOpen size={16} className="vocab-filter-icon" />
           <select value={filterBookId} onChange={e => setFilterBookId(e.target.value)}>
             <option value="all">All Documents</option>
             {books.map(b => (

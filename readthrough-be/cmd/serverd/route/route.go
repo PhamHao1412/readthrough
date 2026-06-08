@@ -55,6 +55,7 @@ func V1Router(
 			books.GET("", bookHandler.List)
 			books.GET("/:id", bookHandler.GetByID)
 			books.GET("/:id/content", bookHandler.GetContent)
+			books.DELETE("/:id", bookHandler.Delete)
 			books.PUT("/:id/progress", bookHandler.UpdateProgress)
 		}
 

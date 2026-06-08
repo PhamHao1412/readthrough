@@ -2,6 +2,7 @@ package v1
 
 import (
 	"net/http"
+	"path/filepath"
 	"readthrough-be/internal/handler/rest/dto"
 	"readthrough-be/internal/model"
 	"readthrough-be/internal/service"
@@ -108,8 +109,16 @@ func (h *BookHandler) GetContent(c *gin.Context) {
 		return
 	}
 
-	// Serve the static file from local storage
-	c.File(book.FilePath)
+	// Get file stream from storage using the base filename as key
+	fileName := filepath.Base(book.FilePath)
+	reader, size, contentType, err := h.bookSvc.DownloadBook(c.Request.Context(), fileName)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ResponseNotFound(err))
+		return
+	}
+	defer reader.Close()
+
+	c.DataFromReader(http.StatusOK, size, contentType, reader, nil)
 }
 
 func (h *BookHandler) UpdateProgress(c *gin.Context) {
@@ -140,4 +149,28 @@ func (h *BookHandler) UpdateProgress(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, dto.ResponseOK(true).WithMessage("Reading progress synchronized"))
+}
+
+func (h *BookHandler) Delete(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, dto.ResponseUnauthorized(nil))
+		return
+	}
+	userID := userIDVal.(uuid.UUID)
+
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ResponseBadRequest(err))
+		return
+	}
+
+	err = h.bookSvc.DeleteBook(c.Request.Context(), id, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.ResponseOK(true).WithMessage("Document deleted successfully"))
 }

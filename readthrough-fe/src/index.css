@@ -352,6 +352,8 @@ body {
    CONTENT AREA
    ====================================== */
 .content-area {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   overflow: hidden;
   position: relative;
@@ -625,6 +627,35 @@ body {
   transform: translateY(-2px);
 }
 
+.delete-book-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--transition);
+  z-index: 10;
+}
+
+.book-card:hover .delete-book-btn {
+  opacity: 1;
+}
+
+.delete-book-btn:hover {
+  background: var(--red-light);
+  color: var(--red);
+  border-color: rgba(220, 38, 38, 0.15);
+}
+
 .book-card::before {
   content: '';
   position: absolute;
@@ -688,6 +719,7 @@ body {
 .book-info {
   flex: 1;
   min-width: 0;
+  padding-right: 28px;
 }
 
 .book-title {
@@ -1564,11 +1596,10 @@ body {
    VOCABULARY NOTEBOOK & TABS
    ====================================== */
 
-/* Library/Vocab tabs in App.tsx */
 .library-tabs {
   display: flex;
   gap: 8px;
-  margin-bottom: 24px;
+  margin: 20px 28px 0 28px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 8px;
 }
@@ -1625,6 +1656,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  padding: 32px 28px 40px;
+  height: 100%;
+  overflow-y: auto;
   animation: fadeIn 0.3s ease;
 }
 
@@ -1681,6 +1715,11 @@ body {
   font-size: 0.875rem;
   outline: none;
   cursor: pointer;
+}
+
+.vocab-filter-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .vocab-empty {

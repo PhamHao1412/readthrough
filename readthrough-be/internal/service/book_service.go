@@ -4,10 +4,10 @@ import (
 	"context"
 	"io"
 	"mime/multipart"
-	"os"
 	"path/filepath"
 	"readthrough-be/internal/entity"
 	"readthrough-be/internal/repository"
+	"readthrough-be/internal/storage"
 	"strings"
 
 	"github.com/google/uuid"
@@ -17,52 +17,47 @@ type IBookService interface {
 	UploadBook(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader, title string, author string) (*entity.Book, error)
 	ListBooks(ctx context.Context, userID uuid.UUID, search string) ([]entity.Book, error)
 	GetBookByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*entity.Book, error)
+	DownloadBook(ctx context.Context, key string) (io.ReadCloser, int64, string, error)
+	DeleteBook(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error
 }
 
 type BookService struct {
 	baseRepo repository.IBaseRepository
 	bookRepo repository.IBookRepository
+	store    storage.Storage
 }
 
-func NewBookService(baseRepo repository.IBaseRepository, bookRepo repository.IBookRepository) *BookService {
+func NewBookService(baseRepo repository.IBaseRepository, bookRepo repository.IBookRepository, store storage.Storage) *BookService {
 	return &BookService{
 		baseRepo: baseRepo,
 		bookRepo: bookRepo,
+		store:    store,
 	}
 }
 
 func (s *BookService) UploadBook(ctx context.Context, userID uuid.UUID, fileHeader *multipart.FileHeader, title string, author string) (*entity.Book, error) {
-	// Create uploads dir if it doesn't exist
-	uploadDir := "uploads"
-	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(uploadDir, 0755); err != nil {
-			return nil, err
-		}
-	}
-
 	// Generate UUID filename
 	bookID := uuid.New()
 	fileExt := strings.ToLower(filepath.Ext(fileHeader.Filename))
 	cleanExt := strings.TrimPrefix(fileExt, ".")
 
 	fileName := bookID.String() + fileExt
-	filePath := filepath.Join(uploadDir, fileName)
 
-	// Save to disk
+	// Save to storage
 	src, err := fileHeader.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer src.Close()
 
-	dst, err := os.Create(filePath)
-	if err != nil {
-		return nil, err
+	contentType := fileHeader.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
-	defer dst.Close()
 
-	if _, err = io.Copy(dst, src); err != nil {
+	filePath, err := s.store.Upload(ctx, fileName, src, fileHeader.Size, contentType)
+	if err != nil {
 		return nil, err
 	}
 
@@ -95,7 +90,7 @@ func (s *BookService) UploadBook(ctx context.Context, userID uuid.UUID, fileHead
 
 	if err := s.bookRepo.Create(ctx, book); err != nil {
 		// Clean up file if DB insert fails
-		os.Remove(filePath)
+		s.store.Delete(ctx, fileName)
 		return nil, err
 	}
 
@@ -110,6 +105,28 @@ func (s *BookService) GetBookByID(ctx context.Context, id uuid.UUID, userID uuid
 	return s.bookRepo.GetByID(ctx, id, userID)
 }
 
+func (s *BookService) DownloadBook(ctx context.Context, key string) (io.ReadCloser, int64, string, error) {
+	return s.store.Download(ctx, key)
+}
+
 func (s *BookService) UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error {
 	return s.bookRepo.UpdateProgress(ctx, id, userID, page, cfi, totalPages)
+}
+
+func (s *BookService) DeleteBook(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
+	book, err := s.bookRepo.GetByID(ctx, id, userID)
+	if err != nil {
+		return err
+	}
+
+	// 1. Delete from database (soft-delete)
+	if err := s.bookRepo.Delete(ctx, id, userID); err != nil {
+		return err
+	}
+
+	// 2. Delete from storage (R2/Local)
+	fileName := filepath.Base(book.FilePath)
+	_ = s.store.Delete(ctx, fileName) // ignore error to avoid failing the DB operation
+
+	return nil
 }

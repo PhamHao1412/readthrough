@@ -12,6 +12,7 @@ type IBookRepository interface {
 	Create(ctx context.Context, book *entity.Book) error
 	List(ctx context.Context, userID uuid.UUID, search string) ([]entity.Book, error)
 	GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*entity.Book, error)
+	Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error
 }
 
@@ -25,6 +26,10 @@ func NewBookRepository(db *gorm.DB) *BookRepository {
 
 func (r *BookRepository) Create(ctx context.Context, book *entity.Book) error {
 	return r.db.WithContext(ctx).Create(book).Error
+}
+
+func (r *BookRepository) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
+	return r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).Delete(&entity.Book{}).Error
 }
 
 func (r *BookRepository) List(ctx context.Context, userID uuid.UUID, search string) ([]entity.Book, error) {

@@ -1,17 +1,19 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, Search, BookOpen, FileText, FileDown, Plus, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { UploadCloud, Search, BookOpen, FileText, FileDown, Plus, AlertCircle, CheckCircle, Loader2, Trash2 } from 'lucide-react';
 import { Book } from './BookReader';
 
 interface BookListProps {
   books: Book[];
   onSelectBook: (book: Book) => void;
   onUploadSuccess: () => void;
+  onDeleteBook: (id: string) => void;
 }
 
 export const BookList: React.FC<BookListProps> = ({
   books,
   onSelectBook,
   onUploadSuccess,
+  onDeleteBook,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [uploading, setUploading] = useState<boolean>(false);
@@ -187,6 +189,16 @@ export const BookList: React.FC<BookListProps> = ({
                 className={`book-card type-${book.file_type}`}
                 onClick={() => onSelectBook(book)}
               >
+                <button
+                  className="delete-book-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteBook(book.id);
+                  }}
+                  title="Delete book"
+                >
+                  <Trash2 size={15} />
+                </button>
                 <div className="book-card-top">
                   <div className={`book-type-icon ${book.file_type}`}>
                     {book.file_type === 'pdf' ? (

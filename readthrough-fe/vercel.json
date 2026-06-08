@@ -7,6 +7,10 @@
     {
       "source": "/uploads/:path*",
       "destination": "https://readthrough.onrender.com/uploads/:path*"
+    },
+    {
+      "source": "/((?!api|uploads).*)",
+      "destination": "/index.html"
     }
   ]
 }
