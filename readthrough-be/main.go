@@ -27,6 +27,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to read app config: %v", err)
 	}
+	log.Printf("app config: %+v", cfg)
 
 	entity.SetConfig(&cfg)
 	logger.Init(&cfg)
