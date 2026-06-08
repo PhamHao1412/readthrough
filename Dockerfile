@@ -50,7 +50,7 @@ RUN apk add --no-cache ca-certificates
 COPY --from=be-builder /app/serverd ./serverd
 
 # Copy goose from builder
-COPY --from=be-builder /root/go/bin/goose /usr/local/bin/goose
+COPY --from=be-builder /go/bin/goose /usr/local/bin/goose
 
 # Copy migration files
 COPY --from=be-builder /app/readthrough-be/data ./data
