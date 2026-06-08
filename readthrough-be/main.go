@@ -31,10 +31,38 @@ func main() {
 	entity.SetConfig(&cfg)
 	logger.Init(&cfg)
 
-	// Allow DB_URL env var to override DB.URL (used on Render, Railway, etc.)
-	if dbURL := os.Getenv("DB_URL"); dbURL != "" {
-		cfg.PG.URL = dbURL
+	// Allow OS environment variables to override config (e.g. on Render, Railway, etc. where .env is empty/missing)
+	if envVal := os.Getenv("PORT"); envVal != "" {
+		cfg.Port = envVal
 	}
+	if cfg.Port == "" {
+		cfg.Port = "8080"
+	}
+	if envVal := os.Getenv("ENV"); envVal != "" {
+		cfg.Env = envVal
+	}
+	if envVal := os.Getenv("APP_NAME"); envVal != "" {
+		cfg.AppName = envVal
+	}
+	if envVal := os.Getenv("DB_SCHEMA_NAME"); envVal != "" {
+		cfg.DBSchemaName = envVal
+	}
+	if envVal := os.Getenv("DB_URL"); envVal != "" {
+		cfg.DbUrl = envVal
+	}
+	if envVal := os.Getenv("LOG_LEVEL"); envVal != "" {
+		cfg.LogLevel = envVal
+	}
+	if envVal := os.Getenv("JWT_SECRET"); envVal != "" {
+		cfg.JWTSecret = envVal
+	}
+	if envVal := os.Getenv("UPLOAD_DIR"); envVal != "" {
+		cfg.UploadDir = envVal
+	}
+
+	// Re-initialize entity and logger config with overridden values
+	entity.SetConfig(&cfg)
+	logger.Init(&cfg)
 
 	// Init JWT secret from config
 	security.Init(cfg.JWTSecret)
@@ -45,7 +73,7 @@ func main() {
 	}
 
 	// Connect to Database
-	dbConn, err := db.Connect(cfg.PG.URL)
+	dbConn, err := db.Connect(cfg.DbUrl)
 	if err != nil {
 		log.Fatalf("failed to connect database: %v", err)
 	}
