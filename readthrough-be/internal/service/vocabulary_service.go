@@ -1,0 +1,62 @@
+package service
+
+import (
+	"context"
+	"readthrough-be/internal/entity"
+	"readthrough-be/internal/repository"
+	"strings"
+
+	"github.com/google/uuid"
+)
+
+type IVocabularyService interface {
+	SaveVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, originalText string, translatedText string) (*entity.Vocabulary, error)
+	ListVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, search string) ([]entity.Vocabulary, error)
+	DeleteVocabulary(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
+	GetVocabularyByWord(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, word string) (*entity.Vocabulary, error)
+}
+
+type VocabularyService struct {
+	vocabRepo repository.IVocabularyRepository
+}
+
+func NewVocabularyService(vocabRepo repository.IVocabularyRepository) *VocabularyService {
+	return &VocabularyService{
+		vocabRepo: vocabRepo,
+	}
+}
+
+func (s *VocabularyService) SaveVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, originalText string, translatedText string) (*entity.Vocabulary, error) {
+	originalText = strings.TrimSpace(originalText)
+	translatedText = strings.TrimSpace(translatedText)
+
+	// Check if already exists
+	existing, err := s.vocabRepo.GetByWord(ctx, bookID, userID, originalText)
+	if err == nil && existing != nil {
+		return existing, nil
+	}
+
+	vocab := &entity.Vocabulary{
+		UserID:         userID,
+		BookID:         bookID,
+		OriginalText:   originalText,
+		TranslatedText: translatedText,
+	}
+
+	if err := s.vocabRepo.Create(ctx, vocab); err != nil {
+		return nil, err
+	}
+	return vocab, nil
+}
+
+func (s *VocabularyService) ListVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, search string) ([]entity.Vocabulary, error) {
+	return s.vocabRepo.List(ctx, bookID, userID, search)
+}
+
+func (s *VocabularyService) DeleteVocabulary(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
+	return s.vocabRepo.Delete(ctx, id, userID)
+}
+
+func (s *VocabularyService) GetVocabularyByWord(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, word string) (*entity.Vocabulary, error) {
+	return s.vocabRepo.GetByWord(ctx, bookID, userID, word)
+}

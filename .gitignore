@@ -1,0 +1,44 @@
+# ========================
+# Go Backend
+# ========================
+readthrough-be/.env
+readthrough-be/serverd
+readthrough-be/uploads/
+readthrough-be/scratch/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work.sum
+
+# ========================
+# Node / Frontend
+# ========================
+readthrough-fe/node_modules/
+readthrough-fe/dist/
+readthrough-fe/.env
+readthrough-fe/.env.local
+readthrough-fe/.env.production
+readthrough-fe/.env.staging
+# Vite cache
+readthrough-fe/.vite/
+
+# ========================
+# IDE / OS
+# ========================
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ========================
+# Docker
+# ========================
+# (không ignore Dockerfile — cần push lên)
