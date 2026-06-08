@@ -9,9 +9,9 @@ if [ -n "$DB_URL" ]; then
     
     # Prepare connection URL containing search_path for goose
     MIGRATE_URL="$DB_URL"
-    if echo "$MIGRATE_URL" | grep -q "\?"; then
+    if echo "$MIGRATE_URL" | grep -Fq "?"; then
         # If query parameters already exist, append using &
-        if ! echo "$MIGRATE_URL" | grep -q "search_path="; then
+        if ! echo "$MIGRATE_URL" | grep -Fq "search_path="; then
             MIGRATE_URL="${MIGRATE_URL}&search_path=readful"
         fi
     else
