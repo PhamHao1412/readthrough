@@ -1,20 +1,5 @@
 # ========================
-# Stage 1: Build Frontend
-# ========================
-FROM node:20-alpine AS fe-builder
-
-WORKDIR /app/readthrough-fe
-
-# Install dependencies
-COPY readthrough-fe/package.json readthrough-fe/package-lock.json ./
-RUN npm ci
-
-# Copy source and build
-COPY readthrough-fe/ ./
-RUN npm run build
-
-# ========================
-# Stage 2: Build Backend
+# Stage 1: Build Backend
 # ========================
 FROM golang:1.25-alpine AS be-builder
 
@@ -37,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /app/serverd .
 RUN CGO_ENABLED=0 GOOS=linux go install github.com/pressly/goose/v3/cmd/goose@v3.22.0
 
 # ========================
-# Stage 3: Final Image
+# Stage 2: Final Image
 # ========================
 FROM alpine:3.19
 
@@ -55,12 +40,12 @@ COPY --from=be-builder /go/bin/goose /usr/local/bin/goose
 # Copy migration files
 COPY --from=be-builder /app/readthrough-be/data ./data
 
-# Copy built frontend assets
-COPY --from=fe-builder /app/readthrough-fe/dist ./readthrough-fe/dist
-
 # Copy entrypoint script
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
+
+# Tạo file .env trống để tránh lỗi crash của thư viện lit/env
+RUN touch .env
 
 EXPOSE 8080
 
