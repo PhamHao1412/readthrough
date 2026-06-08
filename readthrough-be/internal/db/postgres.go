@@ -21,6 +21,16 @@ func Connect(dsn string) (*gorm.DB, error) {
 		},
 	)
 
+	tempDb, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err == nil {
+		tempDb.Exec("CREATE SCHEMA IF NOT EXISTS readful;")
+		if sqlDB, err := tempDb.DB(); err == nil {
+			sqlDB.Close()
+		}
+	}
+
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: newLogger,
 	})
