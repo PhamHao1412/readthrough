@@ -13,8 +13,9 @@ import (
 	"readthrough-be/pkg/logger"
 	"readthrough-be/pkg/security"
 
+	"readthrough-be/pkg/env"
+
 	"github.com/gin-gonic/gin"
-	"github.com/viebiz/lit/env"
 )
 
 func main() {
@@ -27,41 +28,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to read app config: %v", err)
 	}
-	log.Printf("app config: %+v", cfg)
 
-	entity.SetConfig(&cfg)
-	logger.Init(&cfg)
-
-	// Allow OS environment variables to override config (e.g. on Render, Railway, etc. where .env is empty/missing)
-	if envVal := os.Getenv("PORT"); envVal != "" {
-		cfg.Port = envVal
-	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"
 	}
-	if envVal := os.Getenv("ENV"); envVal != "" {
-		cfg.Env = envVal
-	}
-	if envVal := os.Getenv("APP_NAME"); envVal != "" {
-		cfg.AppName = envVal
-	}
-	if envVal := os.Getenv("DB_SCHEMA_NAME"); envVal != "" {
-		cfg.DBSchemaName = envVal
-	}
-	if envVal := os.Getenv("DB_URL"); envVal != "" {
-		cfg.DbUrl = envVal
-	}
-	if envVal := os.Getenv("LOG_LEVEL"); envVal != "" {
-		cfg.LogLevel = envVal
-	}
-	if envVal := os.Getenv("JWT_SECRET"); envVal != "" {
-		cfg.JWTSecret = envVal
-	}
-	if envVal := os.Getenv("UPLOAD_DIR"); envVal != "" {
-		cfg.UploadDir = envVal
-	}
 
-	// Re-initialize entity and logger config with overridden values
+	log.Printf("app config: %+v", cfg)
+
 	entity.SetConfig(&cfg)
 	logger.Init(&cfg)
 
