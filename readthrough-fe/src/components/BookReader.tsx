@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useEffect, useRef, useMemo } from 'react';
-import { ArrowLeft, BookOpen, Copy, Check, AlertTriangle, Languages, Sparkles, X, Coffee, Sun, Moon, Star, Trash2, List, ChevronRight } from 'lucide-react';
+import { ArrowLeft, BookOpen, Copy, Check, AlertTriangle, Languages, Sparkles, X, Coffee, Sun, Moon, Star, Trash2, List, ChevronRight, Volume2, ChevronDown, ChevronUp } from 'lucide-react';
 import { PdfViewer } from './PdfViewer';
 import { EpubViewer } from './EpubViewer';
 import { TxtViewer } from './TxtViewer';
@@ -25,7 +25,71 @@ interface TranslationEntry {
   loading: boolean;
   error: string;
   saving?: boolean;
+  isWord?: boolean;
+  phonetic?: string;
+  audioUrl?: string;
+  partsOfSpeech?: any[];
+  activeTab?: 'translate' | 'explain';
+  explanation?: string;
+  explainLoading?: boolean;
+  explainError?: string;
+  contextSentence?: string;
 }
+
+// Lightweight Markdown helper
+const renderMarkdown = (md: string) => {
+  if (!md) return null;
+  const paragraphs = md.split(/\n\n+/);
+  return paragraphs.map((p, pIdx) => {
+    const trimmed = p.trim();
+    if (!trimmed) return null;
+
+    if (trimmed.startsWith('#')) {
+      const match = trimmed.match(/^(#{1,6})\s+(.*)$/);
+      if (match) {
+        const level = match[1].length;
+        const content = match[2];
+        if (level === 1) return <h1 key={pIdx} className="md-h1">{renderInlineMarkdown(content)}</h1>;
+        if (level === 2) return <h2 key={pIdx} className="md-h2">{renderInlineMarkdown(content)}</h2>;
+        return <h3 key={pIdx} className="md-h3">{renderInlineMarkdown(content)}</h3>;
+      }
+    }
+
+    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+      const lines = trimmed.split('\n');
+      return (
+        <ul key={pIdx} className="md-ul">
+          {lines.map((l, lIdx) => (
+            <li key={lIdx}>{renderInlineMarkdown(l.replace(/^[-*]\s+/, ''))}</li>
+          ))}
+        </ul>
+      );
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const lines = trimmed.split('\n');
+      return (
+        <ol key={pIdx} className="md-ol">
+          {lines.map((l, lIdx) => (
+            <li key={lIdx}>{renderInlineMarkdown(l.replace(/^\d+\.\s+/, ''))}</li>
+          ))}
+        </ol>
+      );
+    }
+
+    return <p key={pIdx} className="md-p">{renderInlineMarkdown(trimmed)}</p>;
+  });
+};
+
+const renderInlineMarkdown = (inlineText: string) => {
+  const parts = inlineText.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+};
 
 interface BookReaderProps {
   book: Book;
@@ -441,6 +505,11 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   const [sidebarTab, setSidebarTab] = useState<'lookup' | 'vocab'>('lookup');
   const [bookVocab, setBookVocab] = useState<any[]>([]);
   const [loadingBookVocab, setLoadingBookVocab] = useState<boolean>(false);
+  const [expandedSidebarContexts, setExpandedSidebarContexts] = useState<Record<string, boolean>>({});
+
+  const toggleSidebarContext = (id: string) => {
+    setExpandedSidebarContexts(prev => ({ ...prev, [id]: !prev[id] }));
+  };
 
   const fetchBookVocabularies = useCallback(async () => {
     setLoadingBookVocab(true);
@@ -499,6 +568,10 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
             book_id: book.id,
             original_text: entry.original,
             translated_text: entry.translated,
+            ipa: entry.phonetic || '',
+            part_of_speech: entry.partsOfSpeech?.[0]?.partOfSpeech || '',
+            context_sentence: entry.contextSentence || '',
+            audio_url: entry.audioUrl || '',
           }),
         });
         if (res.ok) {
@@ -549,11 +622,134 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     }
   }, [book.id]);
 
+  const getSentenceContext = (selectedText: string): string => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return '';
+    const range = sel.getRangeAt(0);
+    const container = range.startContainer;
+    if (!container) return '';
+
+    // Find the text layer container element (e.g. span or p representing the line)
+    const currentLineElement = container.nodeType === Node.TEXT_NODE ? container.parentElement : (container as HTMLElement);
+    if (!currentLineElement) return '';
+
+    // Get the parent text layer container (which contains all line elements)
+    const textLayer = currentLineElement.parentElement;
+    
+    let fullText = currentLineElement.textContent || '';
+
+    // If we have a text layer containing multiple line elements (typical in PDF and EPUB renderers)
+    if (textLayer && textLayer.children.length > 1) {
+      // Find the index of the current line among siblings
+      const siblings = Array.from(textLayer.children);
+      const curIdx = siblings.indexOf(currentLineElement);
+      
+      if (curIdx !== -1) {
+        // Collect 1-2 lines before and 1-2 lines after to get complete sentences
+        const linesBefore: string[] = [];
+        const linesAfter: string[] = [];
+        
+        // Take up to 2 lines before
+        for (let i = Math.max(0, curIdx - 2); i < curIdx; i++) {
+          const text = siblings[i].textContent?.trim() || '';
+          if (text) linesBefore.push(text);
+        }
+        
+        // Take up to 2 lines after
+        for (let i = curIdx + 1; i < Math.min(siblings.length, curIdx + 3); i++) {
+          const text = siblings[i].textContent?.trim() || '';
+          if (text) linesAfter.push(text);
+        }
+
+        // Combine them:
+        // If the current line ends with a hyphen (like transac-), remove it and join directly
+        let currentTextClean = currentLineElement.textContent || '';
+        let nextTextCombined = linesAfter.join(' ');
+        
+        // Handle PDF hyphenation: e.g. transac- + tion
+        if (currentTextClean.endsWith('-') || currentTextClean.endsWith('‐')) {
+          // Remove hyphen and connect directly with the first word of the next line
+          currentTextClean = currentTextClean.slice(0, -1);
+          // Split the next line text by first space to get the first part
+          const firstSpaceIdx = nextTextCombined.indexOf(' ');
+          if (firstSpaceIdx !== -1) {
+            const firstWord = nextTextCombined.substring(0, firstSpaceIdx);
+            const rest = nextTextCombined.substring(firstSpaceIdx + 1);
+            currentTextClean += firstWord;
+            nextTextCombined = rest;
+          } else {
+            currentTextClean += nextTextCombined;
+            nextTextCombined = '';
+          }
+        }
+        
+        fullText = [...linesBefore, currentTextClean, nextTextCombined].join(' ');
+      }
+    }
+
+    // Now extract the sentence containing selectedText from the combined fullText
+    if (fullText && fullText.includes(selectedText)) {
+      const selIdx = fullText.indexOf(selectedText);
+      let pStart = 0;
+      for (let i = selIdx - 1; i >= 0; i--) {
+        const char = fullText[i];
+        if ((char === '.' || char === '!' || char === '?') && (i === fullText.length - 1 || /\s/.test(fullText[i + 1]))) {
+          // Check for abbreviations
+          const word = fullText.slice(Math.max(0, i - 3), i + 1);
+          if (!/Mr\.|Dr\.|St\.|Ms\./i.test(word)) {
+            pStart = i + 1;
+            break;
+          }
+        }
+      }
+      
+      let pEnd = fullText.length;
+      for (let i = selIdx + selectedText.length; i < fullText.length; i++) {
+        const char = fullText[i];
+        if ((char === '.' || char === '!' || char === '?') && (i === fullText.length - 1 || /\s/.test(fullText[i + 1]))) {
+          const word = fullText.slice(Math.max(0, i - 3), i + 1);
+          if (!/Mr\.|Dr\.|St\.|Ms\./i.test(word)) {
+            pEnd = i + 1;
+            break;
+          }
+        }
+      }
+      
+      let sentence = fullText.slice(pStart, pEnd).trim();
+      
+      // Cleanup extra whitespace and double spaces
+      sentence = sentence.replace(/\s+/g, ' ');
+
+      // Cap size to 350 chars
+      if (sentence.length > 350) {
+        const midIdx = sentence.indexOf(selectedText);
+        if (midIdx !== -1) {
+          const start = Math.max(0, midIdx - 150);
+          const end = Math.min(sentence.length, midIdx + selectedText.length + 150);
+          return (start > 0 ? '...' : '') + sentence.slice(start, end).trim() + (end < sentence.length ? '...' : '');
+        }
+      }
+      
+      return sentence;
+    }
+
+    return selectedText;
+  };
+
   const handleSelection = useCallback(async (text: string) => {
     if (!text.trim()) return;
 
+    const contextSentence = getSentenceContext(text.trim());
     const id = Date.now();
-    const entry: TranslationEntry = { id, original: text.trim(), translated: '', loading: true, error: '' };
+    const entry: TranslationEntry = {
+      id,
+      original: text.trim(),
+      translated: '',
+      loading: true,
+      error: '',
+      activeTab: 'translate',
+      contextSentence: contextSentence
+    };
     setTranslations(prev => [entry, ...prev]);
 
     // Auto-open sidebar when translating
@@ -569,7 +765,15 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       const json = await res.json();
       if (json.succeeded && json.data?.translatedText) {
         setTranslations(prev =>
-          prev.map(t => t.id === id ? { ...t, translated: json.data.translatedText, loading: false } : t)
+          prev.map(t => t.id === id ? {
+            ...t,
+            translated: json.data.translatedText,
+            isWord: json.data.isWord,
+            phonetic: json.data.phonetic,
+            audioUrl: json.data.audioUrl,
+            partsOfSpeech: json.data.partsOfSpeech,
+            loading: false
+          } : t)
         );
       } else {
         throw new Error(json.message || 'Translation not found');
@@ -581,6 +785,64 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     }
   }, []);
 
+  const fetchCardExplanation = async (entry: TranslationEntry) => {
+    if (entry.explanation || entry.explainLoading) return;
+    
+    setTranslations(prev =>
+      prev.map(t => t.id === entry.id ? { ...t, explainLoading: true, explainError: '' } : t)
+    );
+    
+    try {
+      const res = await fetchWithAuth('/api/v1/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: entry.original }),
+      });
+      if (!res.ok) throw new Error('Explanation failed');
+      const json = await res.json();
+      if (json.succeeded && json.data?.explanation) {
+        setTranslations(prev =>
+          prev.map(t => t.id === entry.id ? { ...t, explanation: json.data.explanation, explainLoading: false } : t)
+        );
+      } else {
+        throw new Error(json.message || 'AI explanation not found');
+      }
+    } catch (e: any) {
+      setTranslations(prev =>
+        prev.map(t => t.id === entry.id ? { ...t, explainError: e.message || 'AI service error', explainLoading: false } : t)
+      );
+    }
+  };
+
+  const playAudio = (url: string) => {
+    if (!url) return;
+    const audio = new Audio(url);
+    audio.play().catch(e => console.error('Audio play error:', e));
+  };
+
+  const playSidebarWordAudio = (word: string, audioUrl?: string) => {
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audio.play().catch(err => {
+        console.warn('Network audio failed, falling back to Web Speech API:', err);
+        speakWithBrowser(word);
+      });
+    } else {
+      speakWithBrowser(word);
+    }
+  };
+
+  const speakWithBrowser = (text: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      window.speechSynthesis.speak(utterance);
+    } else {
+      console.warn('Browser does not support Speech Synthesis');
+    }
+  };
+
   const handleCopy = (entry: TranslationEntry) => {
     navigator.clipboard.writeText(entry.translated);
     setCopiedId(entry.id);
@@ -589,6 +851,60 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
 
   const removeTranslation = (id: number) => {
     setTranslations(prev => prev.filter(t => t.id !== id));
+  };
+
+  // Date grouping for sidebar vocabularies
+  const getGroupedVocabularies = () => {
+    const groups: Record<string, any[]> = {};
+    
+    bookVocab.forEach(v => {
+      const date = new Date(v.created_at);
+      const today = new Date();
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      
+      let dateKey = '';
+      if (date.toDateString() === today.toDateString()) {
+        dateKey = 'Today';
+      } else if (date.toDateString() === yesterday.toDateString()) {
+        dateKey = 'Yesterday';
+      } else {
+        dateKey = date.toLocaleDateString('en-US', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+      }
+      
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(v);
+    });
+    
+    return groups;
+  };
+
+  const renderSidebarPartOfSpeechBadge = (pos?: string) => {
+    if (!pos) return null;
+    const cleanPos = pos.trim().toLowerCase();
+    let badgeClass = 'vocab-badge';
+    if (['noun', 'verb', 'adjective', 'adverb'].includes(cleanPos)) {
+      badgeClass += ` vocab-badge-${cleanPos}`;
+    }
+    return <span className={badgeClass} style={{ fontSize: '0.6rem', padding: '1px 4px', textTransform: 'uppercase' }}>{pos}</span>;
+  };
+
+  const highlightSidebarWordInSentence = (sentence: string, word: string) => {
+    if (!sentence || !word) return sentence;
+    const escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const regex = new RegExp(`\\b(${escapedWord})\\b`, 'gi');
+    const parts = sentence.split(regex);
+    return parts.map((part, index) => 
+      regex.test(part) || part.toLowerCase() === word.toLowerCase() ? (
+        <span key={index} className="vocab-context-highlight">{part}</span>
+      ) : part
+    );
   };
 
   const contentUrl = blobUrl || '';
@@ -800,6 +1116,28 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                           </button>
                         </div>
                       </div>
+
+                      {/* Mini Tabs inside the card */}
+                      {!entry.loading && !entry.error && (
+                        <div className="tooltip-tabs" style={{ margin: '4px -12px 8px -12px' }}>
+                          <button
+                            className={`tooltip-tab ${(!entry.activeTab || entry.activeTab === 'translate') ? 'active' : ''}`}
+                            onClick={() => setTranslations(prev => prev.map(t => t.id === entry.id ? { ...t, activeTab: 'translate' } : t))}
+                          >
+                            Translate
+                          </button>
+                          <button
+                            className={`tooltip-tab ${entry.activeTab === 'explain' ? 'active' : ''}`}
+                            onClick={() => {
+                              setTranslations(prev => prev.map(t => t.id === entry.id ? { ...t, activeTab: 'explain' } : t));
+                              fetchCardExplanation(entry);
+                            }}
+                          >
+                            AI Explain
+                          </button>
+                        </div>
+                      )}
+
                       <p className="translation-original">"{entry.original}"</p>
 
                       {entry.loading && (
@@ -816,19 +1154,100 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                         </div>
                       )}
 
-                      {!entry.loading && !entry.error && (
+                      {!entry.loading && !entry.error && (!entry.activeTab || entry.activeTab === 'translate') && (
                         <>
                           <div className="translation-divider" />
                           <span className="translation-card-label">Vietnamese</span>
                           <p className="translation-result">{entry.translated}</p>
+
+                          {/* Dictionary details in card */}
+                          {entry.isWord && (
+                            <div className="dict-word-container" style={{ marginTop: '8px' }}>
+                              {(entry.phonetic || entry.audioUrl) && (
+                                <div className="dict-phonetic-row">
+                                  {entry.phonetic && (
+                                    <span className="dict-phonetic-text">{entry.phonetic}</span>
+                                  )}
+                                  {entry.audioUrl && (
+                                    <button
+                                      className="dict-audio-btn"
+                                      onClick={() => playAudio(entry.audioUrl!)}
+                                      title="Listen pronunciation"
+                                    >
+                                      <Volume2 size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+
+                              {entry.partsOfSpeech && entry.partsOfSpeech.map((pos: any, posIdx: number) => (
+                                <div key={posIdx} className="dict-pos-section">
+                                  <span className="dict-pos-badge">{pos.partOfSpeech}</span>
+                                  <ul className="dict-definition-list">
+                                    {pos.definitions && pos.definitions.map((def: any, defIdx: number) => (
+                                      <li key={defIdx} className="dict-definition-item">
+                                        • {def.definition}
+                                        {def.example && (
+                                          <span className="dict-example">Example: "{def.example}"</span>
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
                           <button
                             className={`translation-copy-btn ${copiedId === entry.id ? 'copied' : ''}`}
                             onClick={() => handleCopy(entry)}
+                            style={{ marginTop: '8px' }}
                           >
                             {copiedId === entry.id
                               ? <><Check size={12} /> Copied</>
                               : <><Copy size={12} /> Copy</>}
                           </button>
+                        </>
+                      )}
+
+                      {!entry.loading && !entry.error && entry.activeTab === 'explain' && (
+                        <>
+                          <div className="translation-divider" />
+                          {entry.explainLoading && (
+                            <div className="translation-loading">
+                              <div className="spinner-sm" />
+                              <span>Analyzing grammar with AI...</span>
+                            </div>
+                          )}
+
+                          {entry.explainError && (
+                            <div className="translation-error">
+                              <AlertTriangle size={14} />
+                              <span>{entry.explainError}</span>
+                            </div>
+                          )}
+
+                          {!entry.explainLoading && !entry.explainError && (
+                            <div className="explain-container" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                              {entry.explanation ? renderMarkdown(entry.explanation) : "No explanation available."}
+                            </div>
+                          )}
+
+                          {!entry.explainLoading && !entry.explainError && entry.explanation && (
+                            <button
+                              className={`translation-copy-btn ${copiedId === entry.id ? 'copied' : ''}`}
+                              onClick={() => {
+                                navigator.clipboard.writeText(entry.explanation!);
+                                setCopiedId(entry.id);
+                                setTimeout(() => setCopiedId(null), 2000);
+                              }}
+                              style={{ marginTop: '8px' }}
+                            >
+                              {copiedId === entry.id
+                                ? <><Check size={12} /> Copied</>
+                                : <><Copy size={12} /> Copy</>}
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
@@ -851,19 +1270,55 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                 </div>
               ) : (
                 <div className="sidebar-vocab-list">
-                  {bookVocab.map(v => (
-                    <div key={v.id} className="sidebar-vocab-card">
-                      <div className="sidebar-vocab-card-header">
-                        <p className="sidebar-vocab-original">"{v.original_text}"</p>
-                        <button
-                          className="sidebar-vocab-delete"
-                          onClick={() => handleDeleteBookVocab(v.id)}
-                          title="Remove from notebook"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                      <p className="sidebar-vocab-translated">{v.translated_text}</p>
+                  {Object.entries(getGroupedVocabularies()).map(([dateGroup, items]) => (
+                    <div key={dateGroup} className="sidebar-vocab-date-group">
+                      <div className="sidebar-vocab-date-header">{dateGroup}</div>
+                      {items.map(v => (
+                        <div key={v.id} className="sidebar-vocab-card">
+                          <div className="sidebar-vocab-card-header">
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <p className="sidebar-vocab-original" style={{ margin: 0 }}>"{v.original_text}"</p>
+                              <div className="sidebar-vocab-meta-row">
+                                {renderSidebarPartOfSpeechBadge(v.part_of_speech)}
+                                {v.ipa && <span className="sidebar-vocab-ipa">[{v.ipa}]</span>}
+                                <button
+                                  className="sidebar-vocab-audio-btn"
+                                  onClick={() => playSidebarWordAudio(v.original_text, v.audio_url)}
+                                  title="Play pronunciation"
+                                >
+                                  <Volume2 size={10} />
+                                </button>
+                              </div>
+                            </div>
+                            <button
+                              className="sidebar-vocab-delete"
+                              onClick={() => handleDeleteBookVocab(v.id)}
+                              title="Remove from notebook"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                          <p className="sidebar-vocab-translated">{v.translated_text}</p>
+                          
+                          {/* Context Sentence */}
+                          {v.context_sentence && (
+                            <div className="sidebar-vocab-context-box">
+                              <button
+                                className="sidebar-vocab-context-toggle"
+                                onClick={() => toggleSidebarContext(v.id)}
+                              >
+                                {expandedSidebarContexts[v.id] ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                                <span>Context</span>
+                              </button>
+                              {expandedSidebarContexts[v.id] && (
+                                <p className="sidebar-vocab-context-text">
+                                  {highlightSidebarWordInSentence(v.context_sentence, v.original_text)}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>

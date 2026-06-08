@@ -10,10 +10,14 @@ type Config struct {
 	JWTSecret    string `mapstructure:"JWT_SECRET"`
 	UploadDir    string `mapstructure:"UPLOAD_DIR"`
 	// R2 Cloudflare Configuration
-	R2AccessKeyID     string `mapstructure:"R2_ACCESS_KEY_ID"`
-	R2SecretAccessKey string `mapstructure:"R2_SECRET_ACCESS_KEY"`
-	R2AccountID       string `mapstructure:"R2_ACCOUNT_ID"`
-	R2BucketName      string `mapstructure:"R2_BUCKET_NAME"`
+	R2AccessKeyID        string `mapstructure:"R2_ACCESS_KEY_ID"`
+	R2SecretAccessKey    string `mapstructure:"R2_SECRET_ACCESS_KEY"`
+	R2AccountID          string `mapstructure:"R2_ACCOUNT_ID"`
+	R2BucketName         string `mapstructure:"R2_BUCKET_NAME"`
+	GeminiApiKey         string `mapstructure:"GEMINI_API_KEY"`
+	GeminiModel          string `mapstructure:"GEMINI_MODEL"`
+	GeminiApiVersion     string `mapstructure:"GEMINI_API_VERSION"`
+	GeminiThinkingBudget int    `mapstructure:"GEMINI_THINKING_BUDGET"`
 }
 
 type PGConfig struct {

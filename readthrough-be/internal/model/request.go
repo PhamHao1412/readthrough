@@ -10,10 +10,18 @@ type TranslateRequest struct {
 	Text string `json:"text" binding:"required"`
 }
 
+type ExplainRequest struct {
+	Text string `json:"text" binding:"required"`
+}
+
 type SaveVocabularyRequest struct {
-	BookID         string `json:"book_id" binding:"required,uuid"`
-	OriginalText   string `json:"original_text" binding:"required"`
-	TranslatedText string `json:"translated_text" binding:"required"`
+	BookID          string `json:"book_id" binding:"required,uuid"`
+	OriginalText    string `json:"original_text" binding:"required"`
+	TranslatedText  string `json:"translated_text" binding:"required"`
+	IPA             string `json:"ipa"`
+	PartOfSpeech    string `json:"part_of_speech"`
+	ContextSentence string `json:"context_sentence"`
+	AudioURL        string `json:"audio_url"`
 }
 
 type SignUpRequest struct {

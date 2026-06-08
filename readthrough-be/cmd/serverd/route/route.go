@@ -2,7 +2,6 @@ package route
 
 import (
 	"net/http"
-	"os"
 	v1 "readthrough-be/internal/handler/rest/v1"
 	"readthrough-be/internal/middleware"
 
@@ -16,6 +15,7 @@ func V1Router(
 	healthHandler *v1.HealthHandler,
 	vocabHandler *v1.VocabularyHandler,
 	authHandler *v1.AuthHandler,
+	aiHandler *v1.AIHandler,
 ) {
 	// CORS Middleware
 	r.Use(func(c *gin.Context) {
@@ -37,6 +37,7 @@ func V1Router(
 	{
 		api.GET("/health", healthHandler.HealthCheck)
 		api.POST("/translate", translateHandler.Translate)
+		api.POST("/explain", aiHandler.Explain)
 
 		// Auth Routes (Public)
 		auth := api.Group("/auth")
@@ -68,17 +69,4 @@ func V1Router(
 			vocabularies.DELETE("/:id", vocabHandler.Delete)
 		}
 	}
-
-	// Serve Frontend compiled assets
-	// Supports FRONTEND_DIST_PATH env var for Docker deployments
-	distPath := os.Getenv("FRONTEND_DIST_PATH")
-	if distPath == "" {
-		distPath = "../readthrough-fe/dist" // local dev default
-	}
-	r.Static("/assets", distPath+"/assets")
-	r.StaticFile("/", distPath+"/index.html")
-	// Fallback: serve index.html for SPA routes
-	r.NoRoute(func(c *gin.Context) {
-		c.File(distPath + "/index.html")
-	})
 }

@@ -82,18 +82,21 @@ func main() {
 	// Services
 	bookSvc := service.NewBookService(baseRepo, bookRepo, store)
 	translateSvc := service.NewTranslateService()
+
+	aiSvc := service.NewAIService(cfg.GeminiApiKey, cfg.GeminiModel, cfg.GeminiApiVersion, cfg.GeminiThinkingBudget)
 	vocabSvc := service.NewVocabularyService(vocabRepo)
 	authSvc := service.NewAuthService(userRepo, tokenRepo)
 
 	// Handlers
 	bookHandler := v1.NewBookHandler(bookSvc)
 	translateHandler := v1.NewTranslateHandler(translateSvc)
+	aiHandler := v1.NewAIHandler(aiSvc)
 	healthHandler := v1.NewHealthHandler()
 	vocabHandler := v1.NewVocabularyHandler(vocabSvc)
 	authHandler := v1.NewAuthHandler(authSvc)
 
 	// Router setup
-	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler)
+	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler, aiHandler)
 
 	log.Printf("%s service running at :%s", cfg.AppName, cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {

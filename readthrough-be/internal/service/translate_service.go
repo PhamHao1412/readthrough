@@ -7,12 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"readthrough-be/internal/model"
 	"strings"
 	"time"
 )
 
 type ITranslateService interface {
-	Translate(ctx context.Context, text string) (string, error)
+	Translate(ctx context.Context, text string) (model.TranslateResponse, error)
 }
 
 type TranslateService struct {
@@ -27,19 +28,140 @@ func NewTranslateService() *TranslateService {
 	}
 }
 
-func (s *TranslateService) Translate(ctx context.Context, text string) (string, error) {
-	if strings.TrimSpace(text) == "" {
-		return "", nil
+func (s *TranslateService) Translate(ctx context.Context, text string) (model.TranslateResponse, error) {
+	var resp model.TranslateResponse
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return resp, nil
 	}
 
-	// 1. Try Google Translate Free API first
-	translated, err := s.translateGoogle(ctx, text)
-	if err == nil && translated != "" {
-		return translated, nil
+	// 1. Dịch từ tiếng Anh sang tiếng Việt
+	translated := ""
+	var err error
+	translated, err = s.translateGoogle(ctx, trimmed)
+	if err != nil || translated == "" {
+		// Fallback to MyMemory
+		translated, err = s.translateMyMemory(ctx, trimmed)
 	}
 
-	// 2. Fallback to MyMemory API if Google fails
-	return s.translateMyMemory(ctx, text)
+	if err != nil {
+		return resp, err
+	}
+	resp.TranslatedText = translated
+
+	// 2. Kiểm tra nếu là từ đơn để lấy thông tin từ điển
+	// Từ đơn không chứa khoảng trắng và không quá dài
+	isWord := !strings.Contains(trimmed, " ") && len(trimmed) > 0 && len(trimmed) < 30
+	if isWord {
+		phonetic, audioUrl, partsOfSpeech, err := s.fetchDictionary(ctx, trimmed)
+		if err == nil {
+			resp.IsWord = true
+			resp.Phonetic = phonetic
+			resp.AudioURL = audioUrl
+			resp.PartsOfSpeech = partsOfSpeech
+		}
+	}
+
+	return resp, nil
+}
+
+func (s *TranslateService) fetchDictionary(ctx context.Context, word string) (string, string, []model.PartOfSpeechInfo, error) {
+	cleaned := strings.TrimFunc(word, func(r rune) bool {
+		return r == '.' || r == ',' || r == '?' || r == '!' || r == ';' || r == ':' || r == '"' || r == '\'' || r == '(' || r == ')'
+	})
+
+	apiURL := fmt.Sprintf("https://api.dictionaryapi.dev/api/v2/entries/en/%s", url.PathEscape(cleaned))
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", "", nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", nil, fmt.Errorf("dictionary api returned: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	type dictPhonetic struct {
+		Text  string `json:"text"`
+		Audio string `json:"audio"`
+	}
+
+	type dictDefinition struct {
+		Definition string `json:"definition"`
+		Example    string `json:"example"`
+	}
+
+	type dictMeaning struct {
+		PartOfSpeech string           `json:"partOfSpeech"`
+		Definitions  []dictDefinition `json:"definitions"`
+	}
+
+	type dictEntry struct {
+		Word      string         `json:"word"`
+		Phonetic  string         `json:"phonetic"`
+		Phonetics []dictPhonetic `json:"phonetics"`
+		Meanings  []dictMeaning  `json:"meanings"`
+	}
+
+	var entries []dictEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return "", "", nil, err
+	}
+
+	if len(entries) == 0 {
+		return "", "", nil, fmt.Errorf("no dictionary entry found")
+	}
+
+	entry := entries[0]
+	phonetic := entry.Phonetic
+	audioUrl := ""
+
+	for _, p := range entry.Phonetics {
+		if p.Audio != "" {
+			audioUrl = p.Audio
+			break
+		}
+	}
+	if phonetic == "" {
+		for _, p := range entry.Phonetics {
+			if p.Text != "" {
+				phonetic = p.Text
+				break
+			}
+		}
+	}
+
+	var partsOfSpeech []model.PartOfSpeechInfo
+	for _, m := range entry.Meanings {
+		var definitions []model.DefinitionInfo
+		limit := 3
+		if len(m.Definitions) < limit {
+			limit = len(m.Definitions)
+		}
+		for i := 0; i < limit; i++ {
+			d := m.Definitions[i]
+			definitions = append(definitions, model.DefinitionInfo{
+				Definition: d.Definition,
+				Example:    d.Example,
+			})
+		}
+		partsOfSpeech = append(partsOfSpeech, model.PartOfSpeechInfo{
+			PartOfSpeech: m.PartOfSpeech,
+			Definitions:  definitions,
+		})
+	}
+
+	return phonetic, audioUrl, partsOfSpeech, nil
 }
 
 func (s *TranslateService) translateGoogle(ctx context.Context, text string) (string, error) {

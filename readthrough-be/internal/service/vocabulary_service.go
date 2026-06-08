@@ -10,7 +10,7 @@ import (
 )
 
 type IVocabularyService interface {
-	SaveVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, originalText string, translatedText string) (*entity.Vocabulary, error)
+	SaveVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, originalText string, translatedText string, ipa string, partOfSpeech string, contextSentence string, audioURL string) (*entity.Vocabulary, error)
 	ListVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, search string) ([]entity.Vocabulary, error)
 	DeleteVocabulary(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	GetVocabularyByWord(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, word string) (*entity.Vocabulary, error)
@@ -26,21 +26,37 @@ func NewVocabularyService(vocabRepo repository.IVocabularyRepository) *Vocabular
 	}
 }
 
-func (s *VocabularyService) SaveVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, originalText string, translatedText string) (*entity.Vocabulary, error) {
+func (s *VocabularyService) SaveVocabulary(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, originalText string, translatedText string, ipa string, partOfSpeech string, contextSentence string, audioURL string) (*entity.Vocabulary, error) {
 	originalText = strings.TrimSpace(originalText)
 	translatedText = strings.TrimSpace(translatedText)
+	ipa = strings.TrimSpace(ipa)
+	partOfSpeech = strings.TrimSpace(partOfSpeech)
+	contextSentence = strings.TrimSpace(contextSentence)
+	audioURL = strings.TrimSpace(audioURL)
 
 	// Check if already exists
 	existing, err := s.vocabRepo.GetByWord(ctx, bookID, userID, originalText)
 	if err == nil && existing != nil {
+		existing.TranslatedText = translatedText
+		existing.IPA = ipa
+		existing.PartOfSpeech = partOfSpeech
+		existing.ContextSentence = contextSentence
+		existing.AudioURL = audioURL
+		if err := s.vocabRepo.Update(ctx, existing); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 
 	vocab := &entity.Vocabulary{
-		UserID:         userID,
-		BookID:         bookID,
-		OriginalText:   originalText,
-		TranslatedText: translatedText,
+		UserID:          userID,
+		BookID:          bookID,
+		OriginalText:    originalText,
+		TranslatedText:  translatedText,
+		IPA:             ipa,
+		PartOfSpeech:    partOfSpeech,
+		ContextSentence: contextSentence,
+		AudioURL:        audioURL,
 	}
 
 	if err := s.vocabRepo.Create(ctx, vocab); err != nil {

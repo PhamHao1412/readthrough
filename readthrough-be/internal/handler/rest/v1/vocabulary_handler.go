@@ -38,7 +38,7 @@ func (h *VocabularyHandler) Save(c *gin.Context) {
 		return
 	}
 
-	vocab, err := h.vocabSvc.SaveVocabulary(c.Request.Context(), bookID, userID, req.OriginalText, req.TranslatedText)
+	vocab, err := h.vocabSvc.SaveVocabulary(c.Request.Context(), bookID, userID, req.OriginalText, req.TranslatedText, req.IPA, req.PartOfSpeech, req.ContextSentence, req.AudioURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
 		return

@@ -10,6 +10,7 @@ import (
 
 type IVocabularyRepository interface {
 	Create(ctx context.Context, vocab *entity.Vocabulary) error
+	Update(ctx context.Context, vocab *entity.Vocabulary) error
 	List(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, search string) ([]entity.Vocabulary, error)
 	Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	GetByWord(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, word string) (*entity.Vocabulary, error)
@@ -25,6 +26,10 @@ func NewVocabularyRepository(db *gorm.DB) *VocabularyRepository {
 
 func (r *VocabularyRepository) Create(ctx context.Context, vocab *entity.Vocabulary) error {
 	return r.db.WithContext(ctx).Create(vocab).Error
+}
+
+func (r *VocabularyRepository) Update(ctx context.Context, vocab *entity.Vocabulary) error {
+	return r.db.WithContext(ctx).Save(vocab).Error
 }
 
 func (r *VocabularyRepository) List(ctx context.Context, bookID uuid.UUID, userID uuid.UUID, search string) ([]entity.Vocabulary, error) {
