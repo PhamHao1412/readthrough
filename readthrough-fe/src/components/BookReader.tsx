@@ -401,11 +401,26 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   useEffect(() => {
     let active = true;
     let localBlobUrl = '';
-
     const fetchContent = async () => {
       setLoadingContent(true);
       setContentError('');
+      let isPresigned = false;
       try {
+        const cacheName = 'readthrough-book-cache';
+        const cacheKey = `/books/${book.id}/content`;
+        const cache = await caches.open(cacheName);
+        const cachedResponse = await cache.match(cacheKey);
+
+        if (cachedResponse) {
+          const blob = await cachedResponse.blob();
+          if (!active) return;
+          localBlobUrl = URL.createObjectURL(blob);
+          setBlobUrl(localBlobUrl);
+          setLoadingContent(false);
+          console.log('[Cache] Loaded book instantly from local cache');
+          return;
+        }
+
         // 1. Get the download URL (either R2 pre-signed or backend local path)
         const urlRes = await fetchWithAuth(`/api/v1/books/${book.id}/download-url`);
         if (!urlRes.ok) throw new Error('Failed to retrieve download link.');
@@ -416,20 +431,29 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         }
 
         const { url, is_presigned } = urlJson.data;
-        let fileRes;
+        isPresigned = !!is_presigned;
 
         // 2. Fetch the file based on whether it is a pre-signed Cloud URL or Local fallback
-        if (is_presigned) {
-          // Direct download from Cloudflare R2 (WITHOUT backend Authorization header to avoid signature issues)
+        let fileRes;
+        if (isPresigned) {
           fileRes = await fetch(url);
         } else {
-          // Local fallback download (WITH backend Authorization header)
           fileRes = await fetchWithAuth(`/api/v1/books/${book.id}/content`);
         }
 
         if (!fileRes.ok) throw new Error('Failed to download book content file.');
+        
+        // Clone the response to store it in cache and get the blob for current render
+        const fileResClone = fileRes.clone();
         const blob = await fileRes.blob();
         
+        try {
+          await cache.put(cacheKey, fileResClone);
+          console.log('[Cache] Saved book content to local cache');
+        } catch (cacheErr) {
+          console.warn('[Cache] Failed to write to cache storage:', cacheErr);
+        }
+
         if (!active) return;
         localBlobUrl = URL.createObjectURL(blob);
         setBlobUrl(localBlobUrl);
@@ -444,7 +468,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
 
     return () => {
       active = false;
-      if (localBlobUrl) {
+      if (localBlobUrl && localBlobUrl.startsWith('blob:')) {
         URL.revokeObjectURL(localBlobUrl);
       }
     };

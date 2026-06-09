@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -45,17 +46,34 @@ func (s *AIService) Explain(ctx context.Context, text string) (string, error) {
 		return "", nil
 	}
 
-	prompt := fmt.Sprintf(`Bạn là một giáo viên dạy tiếng Anh nhiệt tình và chuyên nghiệp. Hãy phân tích đoạn văn/câu sau bằng tiếng Việt để giúp người đọc hiểu rõ:
+	prompt := fmt.Sprintf(`Bạn là một giáo viên dạy tiếng Anh nhiệt tình và chuyên nghiệp. Hãy phân tích đoạn văn/câu/từ sau bằng tiếng Việt:
 ---
 "%s"
 ---
 
-Hãy định dạng kết quả dưới dạng Markdown đẹp mắt (sử dụng tiêu đề, danh sách, in đậm rõ ràng), cấu trúc phân tích gồm:
+Yêu cầu nghiêm ngặt về định dạng (BẮT BUỘC):
+1. BẮT ĐẦU câu trả lời NGAY LẬP TỨC bằng nội dung phân tích (bắt đầu bằng tiêu đề hoặc phần Dịch nghĩa). TUYỆT ĐỐI không có lời chào hỏi, giới thiệu xã giao hay dẫn dắt ban đầu (ví dụ: KHÔNG viết "Tuyệt vời...", "Chào mừng...", "Với vai trò...").
+2. KẾT THÚC câu trả lời trực tiếp ở mục số 4. TUYỆT ĐỐI không có lời chúc, lời cảm ơn hay lời chào tạm biệt ở cuối (ví dụ: KHÔNG viết "Hy vọng...", "Chúc các bạn...", "Nếu có câu hỏi...").
+3. QUY TẮC XUỐNG DÒNG KÉP (QUAN TRỌNG): Luôn sử dụng 2 dấu xuống dòng (double newlines / \n\n) để phân tách giữa tất cả các phần, đặc biệt là giữa tiêu đề (ví dụ: "### 1. Dịch nghĩa...") và các dòng nội dung hoặc danh sách tiếp theo bên dưới nó. TUYỆT ĐỐI không viết liền kề tiêu đề và nội dung chỉ bằng 1 dấu xuống dòng (\n) đơn lẻ.
+4. Giải thích súc tích, ngắn gọn, đi thẳng vào ý chính để tối ưu hóa tốc độ phản hồi.
 
-1. **Dịch nghĩa tự nhiên (Translation)**: Dịch nghĩa của câu/đoạn văn sang tiếng Việt một cách trôi chảy, tự nhiên nhất.
-2. **Cấu trúc Ngữ pháp (Grammar Breakdown)**: Phân tích các cấu trúc ngữ pháp quan trọng, thì của động từ, mệnh đề hoặc cấu trúc đặc biệt được dùng.
-3. **Từ vựng & Thành ngữ (Vocabulary & Idioms)**: Liệt kê các từ mới, cụm động từ (phrasal verbs), hoặc thành ngữ (idioms) xuất hiện kèm nghĩa và ví dụ ngắn.
-4. **Viết lại câu (Alternative Phrasing)**: Viết lại câu này bằng tiếng Anh đơn giản hơn hoặc trang trọng hơn để người dùng dễ ghi nhớ.`, trimmed)
+Định dạng kết quả dưới dạng Markdown gồm 4 phần sau (ngăn cách nhau bằng 2 dấu xuống dòng):
+
+### 1. Dịch nghĩa tự nhiên (Translation)
+
+[Dịch nghĩa tự nhiên của câu/đoạn văn/từ sang tiếng Việt một cách trôi chảy nhất]
+
+### 2. Cấu trúc Ngữ pháp (Grammar Breakdown)
+
+[Phân tích ngắn gọn cấu trúc ngữ pháp quan trọng hoặc từ loại, cách dùng của từ/câu này]
+
+### 3. Từ vựng & Thành ngữ (Vocabulary & Idioms)
+
+[Giải nghĩa ngắn gọn các từ/cụm từ quan trọng kèm ví dụ ngắn]
+
+### 4. Viết lại câu (Alternative Phrasing)
+
+[1-2 cách diễn đạt khác bằng tiếng Anh đơn giản hoặc trang trọng hơn để dễ ghi nhớ]`, trimmed)
 
 	generationConfig := map[string]interface{}{
 		"temperature": 0.2,
@@ -104,14 +122,14 @@ Hãy định dạng kết quả dưới dạng Markdown đẹp mắt (sử dụn
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("gemini api returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[AIService] Gemini API error (status %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("gemini api returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse Response
