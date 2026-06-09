@@ -2,7 +2,6 @@
 readthrough-be/.env
 readthrough-be/serverd
 readthrough-be/uploads/
-readthrough-fe/node_modules/
-readthrough-fe/dist/
+readthrough-fe/
 *.log
 .DS_Store
