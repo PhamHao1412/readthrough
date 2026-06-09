@@ -91,7 +91,7 @@ func main() {
 	bookHandler := v1.NewBookHandler(bookSvc)
 	translateHandler := v1.NewTranslateHandler(translateSvc)
 	aiHandler := v1.NewAIHandler(aiSvc)
-	healthHandler := v1.NewHealthHandler()
+	healthHandler := v1.NewHealthHandler(dbConn)
 	vocabHandler := v1.NewVocabularyHandler(vocabSvc)
 	authHandler := v1.NewAuthHandler(authSvc)
 
