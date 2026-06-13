@@ -826,7 +826,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       const res = await fetchWithAuth('/api/v1/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: entry.original }),
+        body: JSON.stringify({
+          text: entry.original,
+          context_sentence: entry.contextSentence || '',
+          book_title: book.title || '',
+          book_author: book.author || '',
+          page_number: currentPage || 1,
+        }),
       });
       if (!res.ok) throw new Error('Explanation failed');
       const json = await res.json();

@@ -11,7 +11,11 @@ type TranslateRequest struct {
 }
 
 type ExplainRequest struct {
-	Text string `json:"text" binding:"required"`
+	Text            string `json:"text" binding:"required"`
+	ContextSentence string `json:"context_sentence"`
+	BookTitle       string `json:"book_title"`
+	BookAuthor      string `json:"book_author"`
+	PageNumber      int    `json:"page_number"`
 }
 
 type SaveVocabularyRequest struct {

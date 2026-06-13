@@ -79,11 +79,13 @@ func main() {
 	userRepo := repository.NewUserRepository(dbConn)
 	tokenRepo := repository.NewRefreshTokenRepository(dbConn)
 
+	aiExplanationRepo := repository.NewAIExplanationRepository(dbConn)
+
 	// Services
 	bookSvc := service.NewBookService(baseRepo, bookRepo, store)
 	translateSvc := service.NewTranslateService()
 
-	aiSvc := service.NewAIService(cfg.OpenAIApiKey, cfg.OpenAIModel)
+	aiSvc := service.NewAIService(cfg.OpenAIApiKey, cfg.OpenAIModel, aiExplanationRepo)
 	vocabSvc := service.NewVocabularyService(vocabRepo)
 	authSvc := service.NewAuthService(userRepo, tokenRepo)
 

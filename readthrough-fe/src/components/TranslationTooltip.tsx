@@ -6,6 +6,10 @@ interface TranslationTooltipProps {
   x: number;
   y: number;
   onClose: () => void;
+  contextSentence?: string;
+  bookTitle?: string;
+  bookAuthor?: string;
+  pageNumber?: number;
 }
 
 interface DefinitionInfo {
@@ -18,7 +22,16 @@ interface PartOfSpeechInfo {
   definitions: DefinitionInfo[];
 }
 
-export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({ text, x, y, onClose }) => {
+export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
+  text,
+  x,
+  y,
+  onClose,
+  contextSentence,
+  bookTitle,
+  bookAuthor,
+  pageNumber,
+}) => {
   const [activeTab, setActiveTab] = useState<'translate' | 'explain'>('translate');
   
   // Translate Tab state
@@ -72,7 +85,13 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({ text, x,
           const res = await fetch('/api/v1/explain', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify({
+              text,
+              context_sentence: contextSentence || '',
+              book_title: bookTitle || '',
+              book_author: bookAuthor || '',
+              page_number: pageNumber || 1,
+            }),
           });
           if (!res.ok) throw new Error('Explanation failed.');
           const json = await res.json();

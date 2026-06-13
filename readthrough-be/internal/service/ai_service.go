@@ -8,24 +8,24 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"readthrough-be/internal/entity"
+	"readthrough-be/internal/repository"
 	"strings"
-	"sync"
 	"time"
 )
 
 type IAIService interface {
-	Explain(ctx context.Context, text string) (string, error)
+	Explain(ctx context.Context, text string, contextSentence string, bookTitle string, bookAuthor string, pageNumber int) (string, error)
 }
 
 type AIService struct {
-	apiKey       string
-	model        string
-	client       *http.Client
-	explainCache map[string]string
-	cacheMu      sync.RWMutex
+	apiKey            string
+	model             string
+	client            *http.Client
+	aiExplanationRepo repository.IAIExplanationRepository
 }
 
-func NewAIService(apiKey, model string) *AIService {
+func NewAIService(apiKey, model string, aiExplanationRepo repository.IAIExplanationRepository) *AIService {
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
@@ -35,11 +35,11 @@ func NewAIService(apiKey, model string) *AIService {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		explainCache: make(map[string]string),
+		aiExplanationRepo: aiExplanationRepo,
 	}
 }
 
-func (s *AIService) Explain(ctx context.Context, text string) (string, error) {
+func (s *AIService) Explain(ctx context.Context, text string, contextSentence string, bookTitle string, bookAuthor string, pageNumber int) (string, error) {
 	if s.apiKey == "" {
 		return "", fmt.Errorf("openai API key is not configured")
 	}
@@ -49,19 +49,38 @@ func (s *AIService) Explain(ctx context.Context, text string) (string, error) {
 		return "", nil
 	}
 
-	// Check local cache
-	s.cacheMu.RLock()
-	cached, found := s.explainCache[trimmed]
-	s.cacheMu.RUnlock()
-	if found {
-		log.Printf("[AIService] Return cached explanation for: %q", trimmed)
-		return cached, nil
+	// Check DB cache instead of RAM cache
+	cached, err := s.aiExplanationRepo.Get(ctx, trimmed, strings.TrimSpace(contextSentence))
+	if err == nil && cached != nil {
+		log.Printf("[AIService] Return DB-cached explanation for: %q", trimmed)
+		return cached.Explanation, nil
 	}
 
-	prompt := fmt.Sprintf(`Bạn là một giáo viên dạy tiếng Anh nhiệt tình và chuyên nghiệp. Hãy phân tích đoạn văn/câu/từ sau bằng tiếng Việt:
+	var contextPart string
+	if contextSentence != "" && contextSentence != trimmed {
+		contextPart = fmt.Sprintf("Câu chứa từ này: \"%s\"", strings.TrimSpace(contextSentence))
+	}
+
+	var bookPart string
+	if bookTitle != "" {
+		if bookAuthor != "" && bookAuthor != "Tác giả ẩn danh" && bookAuthor != "Anonymous Author" {
+			bookPart = fmt.Sprintf("Sách: \"%s\" (Tác giả: %s)", bookTitle, bookAuthor)
+		} else {
+			bookPart = fmt.Sprintf("Sách: \"%s\"", bookTitle)
+		}
+		if pageNumber > 0 {
+			bookPart += fmt.Sprintf(", Trang: %d", pageNumber)
+		}
+	}
+
+	prompt := fmt.Sprintf(`Bạn là một giáo viên dạy tiếng Anh nhiệt tình và chuyên nghiệp. Hãy phân tích từ/cụm từ sau bằng tiếng Việt:
 ---
-"%s"
+Từ/cụm từ: "%[1]s"
+%[2]s
+%[3]s
 ---
+
+BẮT BUỘC: Bạn phải ưu tiên giải nghĩa và phân tích chính xác theo ngữ cảnh của câu chứa từ này (nếu có ngữ cảnh). Hãy chỉ ra sắc thái nghĩa cụ thể trong ngữ cảnh này khác hoặc giống như thế nào với nghĩa thông dụng nhất của từ.
 
 Yêu cầu nghiêm ngặt về định dạng (BẮT BUỘC):
 1. BẮT ĐẦU câu trả lời NGAY LẬP TỨC bằng nội dung phân tích (bắt đầu bằng tiêu đề ### 1). TUYỆT ĐỐI không có lời chào hỏi, giới thiệu xã giao hay dẫn dắt ban đầu (ví dụ: KHÔNG viết "Tuyệt vời...", "Chào mừng...", "Với vai trò...").
@@ -74,16 +93,16 @@ Yêu cầu nghiêm ngặt về định dạng (BẮT BUỘC):
 
 ### 1. Dịch nghĩa tự nhiên (Translation)
 
-[Dịch nghĩa tự nhiên của câu/đoạn văn/từ sang tiếng Việt một cách trôi chảy nhất. Nếu là từ đơn, hãy nêu rõ từ loại và giải thích thêm về ngữ cảnh/sắc thái sử dụng của từ đó (ví dụ: dùng trong hoàn cảnh trang trọng, học thuật hay giao tiếp hằng ngày)]
+[Dịch nghĩa của từ/cụm từ sang tiếng Việt một cách trôi chảy và phù hợp nhất với ngữ cảnh câu chứa nó. Nêu rõ từ loại và giải thích sắc thái nghĩa cụ thể trong ngữ cảnh này (ví dụ: nghĩa bóng, thành ngữ, hay nghĩa chuyên ngành)]
 
-### 2. Cấu trúc Ngữ pháp (Grammar Breakdown)
+### 2. Cấu trúc Ngữ pháp & Ngữ cảnh (Grammar & Context Breakdown)
 
-[Phân tích ngắn gọn cấu trúc ngữ pháp quan trọng hoặc cách dùng, vị trí của từ/câu này trong câu]
+[Phân tích ngắn gọn vị trí, vai trò ngữ pháp của từ/cụm từ trong câu chứa nó. Giải thích tại sao trong ngữ cảnh này từ lại mang ý nghĩa đó]
 
 ### 3. Ví dụ áp dụng & Từ vựng liên quan (Examples & Vocabulary)
 
-- **Ví dụ thực tế 1**: "[Câu ví dụ tiếng Anh áp dụng từ/câu gốc này]" -> "[Dịch nghĩa của câu ví dụ sang tiếng Việt]"
-- **Ví dụ thực tế 2**: "[Câu ví dụ tiếng Anh thứ hai áp dụng từ/câu gốc này]" -> "[Dịch nghĩa của câu ví dụ sang tiếng Việt]"
+- **Ví dụ thực tế 1**: "[Câu ví dụ tiếng Anh áp dụng từ/cụm từ gốc này]" -> "[Dịch nghĩa của câu ví dụ sang tiếng Việt]"
+- **Ví dụ thực tế 2**: "[Câu ví dụ tiếng Anh thứ hai áp dụng từ/cụm từ gốc này]" -> "[Dịch nghĩa của câu ví dụ sang tiếng Việt]"
 - **[Cụm từ/Từ liên quan]**: [Ý nghĩa cụm từ hoặc từ phái sinh hay đi kèm với từ gốc] (Ví dụ: "[Câu ví dụ]" -> "[Dịch nghĩa]")
 
 ### 4. Cách diễn đạt thay thế (Alternative Phrasing)
@@ -94,7 +113,7 @@ Nếu đoạn phân tích trên là một từ đơn hoặc cụm từ ngắn, h
 
 Nếu đoạn phân tích trên là một câu hoặc đoạn văn đầy đủ, hãy cung cấp các cách viết lại câu (alternative phrasing) kèm dịch nghĩa tương ứng bằng tiếng Việt. Ví dụ:
 - "[Cách viết lại câu 1]" -> "[Dịch nghĩa]"
-- "[Cách viết lại câu 2]" -> "[Dịch nghĩa]"`, trimmed)
+- "[Cách viết lại câu 2]" -> "[Dịch nghĩa]"`, trimmed, contextPart, bookPart)
 
 	// Build request body
 	reqBody := map[string]interface{}{
@@ -195,10 +214,15 @@ Nếu đoạn phân tích trên là một câu hoặc đoạn văn đầy đủ,
 	if len(openAIResp.Choices) > 0 {
 		explanation := openAIResp.Choices[0].Message.Content
 
-		// Cache the result
-		s.cacheMu.Lock()
-		s.explainCache[trimmed] = explanation
-		s.cacheMu.Unlock()
+		// Save the result to DB cache
+		newExp := &entity.AIExplanation{
+			Word:            trimmed,
+			ContextSentence: strings.TrimSpace(contextSentence),
+			Explanation:     explanation,
+		}
+		if err := s.aiExplanationRepo.Create(ctx, newExp); err != nil {
+			log.Printf("[AIService] Failed to cache explanation in DB: %v", err)
+		}
 
 		return explanation, nil
 	}

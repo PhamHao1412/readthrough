@@ -24,7 +24,7 @@ func (h *AIHandler) Explain(c *gin.Context) {
 		return
 	}
 
-	explanation, err := h.aiSvc.Explain(c.Request.Context(), req.Text)
+	explanation, err := h.aiSvc.Explain(c.Request.Context(), req.Text, req.ContextSentence, req.BookTitle, req.BookAuthor, req.PageNumber)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
 		return
