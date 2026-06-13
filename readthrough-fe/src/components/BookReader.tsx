@@ -34,6 +34,7 @@ interface TranslationEntry {
   explainLoading?: boolean;
   explainError?: string;
   contextSentence?: string;
+  isCached?: boolean;
 }
 
 // Lightweight Markdown helper
@@ -95,6 +96,36 @@ const renderInlineMarkdown = (inlineText: string) => {
     }
     return part;
   });
+};
+
+interface AutoScrollContainerProps {
+  content: string;
+  renderMarkdown: (md: string) => React.ReactNode;
+  isCached?: boolean;
+}
+
+const AutoScrollContainer: React.FC<AutoScrollContainerProps> = ({ content, renderMarkdown, isCached }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      if (isCached) {
+        containerRef.current.scrollTop = 0;
+      } else {
+        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      }
+    }
+  }, [content, isCached]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="explain-container"
+      style={{ maxHeight: '200px', overflowY: 'auto' }}
+    >
+      {content ? renderMarkdown(content) : "No explanation available."}
+    </div>
+  );
 };
 
 interface BookReaderProps {
@@ -652,6 +683,18 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     }
   }, [book.id]);
 
+  const handlePdfPageChange = useCallback((page: number, total: number) => {
+    saveProgress(page, '', total);
+  }, [saveProgress]);
+
+  const handleEpubProgressChange = useCallback((cfi: string) => {
+    saveProgress(1, cfi);
+  }, [saveProgress]);
+
+  const handleTxtPageChange = useCallback((page: number, total: number) => {
+    saveProgress(page, '', total);
+  }, [saveProgress]);
+
   const getSentenceContext = (selectedText: string): string => {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return '';
@@ -834,14 +877,69 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           page_number: currentPage || 1,
         }),
       });
+
       if (!res.ok) throw new Error('Explanation failed');
-      const json = await res.json();
-      if (json.succeeded && json.data?.explanation) {
-        setTranslations(prev =>
-          prev.map(t => t.id === entry.id ? { ...t, explanation: json.data.explanation, explainLoading: false } : t)
-        );
-      } else {
-        throw new Error(json.message || 'AI explanation not found');
+      if (!res.body) throw new Error('ReadableStream is not supported by your browser.');
+
+      setTranslations(prev =>
+        prev.map(t => t.id === entry.id ? { ...t, explanation: '', explainLoading: false, isCached: false } : t)
+      );
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let accumulatedText = '';
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data:')) {
+            const dataStr = trimmed.slice(5).trim();
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.content) {
+                accumulatedText += parsed.content;
+                const hasCachedPrefix = accumulatedText.startsWith('[CACHED]');
+                setTranslations(prev =>
+                  prev.map(t => t.id === entry.id ? {
+                    ...t,
+                    explanation: hasCachedPrefix ? accumulatedText.slice(8) : accumulatedText,
+                    isCached: hasCachedPrefix
+                  } : t)
+                );
+              }
+            } catch (e) {
+              console.warn('Failed to parse SSE JSON chunk:', e, dataStr);
+            }
+          }
+        }
+      }
+
+      if (buffer.trim().startsWith('data:')) {
+        const dataStr = buffer.trim().slice(5).trim();
+        try {
+          const parsed = JSON.parse(dataStr);
+          if (parsed.content) {
+            accumulatedText += parsed.content;
+            const hasCachedPrefix = accumulatedText.startsWith('[CACHED]');
+            setTranslations(prev =>
+              prev.map(t => t.id === entry.id ? {
+                ...t,
+                explanation: hasCachedPrefix ? accumulatedText.slice(8) : accumulatedText,
+                isCached: hasCachedPrefix
+              } : t)
+            );
+          }
+        } catch (e) {
+          console.warn('Failed to parse SSE JSON chunk:', e, dataStr);
+        }
       }
     } catch (e: any) {
       setTranslations(prev =>
@@ -1052,7 +1150,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   bookId={book.id}
                   url={contentUrl}
                   initialPage={currentPage}
-                  onPageChange={(page, total) => saveProgress(page, '', total)}
+                  onPageChange={handlePdfPageChange}
                   onSelection={handleSelection}
                   onOutlineLoaded={handleOutlineLoaded}
                 />
@@ -1062,7 +1160,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   bookId={book.id}
                   url={contentUrl}
                   initialCfi={currentCfi}
-                  onProgressChange={(cfi) => saveProgress(1, cfi)}
+                  onProgressChange={handleEpubProgressChange}
                   onSelection={handleSelection}
                   theme={theme}
                   onOutlineLoaded={handleOutlineLoaded}
@@ -1073,7 +1171,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   bookId={book.id}
                   url={contentUrl}
                   initialPage={currentPage}
-                  onPageChange={(page, total) => saveProgress(page, '', total)}
+                  onPageChange={handleTxtPageChange}
                   onSelection={handleSelection}
                 />
               )}
@@ -1264,9 +1362,11 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                           )}
 
                           {!entry.explainLoading && !entry.explainError && (
-                            <div className="explain-container" style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                              {entry.explanation ? renderMarkdown(entry.explanation) : "No explanation available."}
-                            </div>
+                            <AutoScrollContainer
+                              content={entry.explanation || ''}
+                              renderMarkdown={renderMarkdown}
+                              isCached={entry.isCached}
+                            />
                           )}
 
                           {!entry.explainLoading && !entry.explainError && entry.explanation && (

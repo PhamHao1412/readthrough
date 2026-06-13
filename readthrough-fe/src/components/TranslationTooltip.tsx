@@ -22,6 +22,35 @@ interface PartOfSpeechInfo {
   definitions: DefinitionInfo[];
 }
 
+interface AutoScrollContainerProps {
+  content: string;
+  renderMarkdown: (md: string) => React.ReactNode;
+  isCached?: boolean;
+}
+
+const AutoScrollContainer: React.FC<AutoScrollContainerProps> = ({ content, renderMarkdown, isCached }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      if (isCached) {
+        containerRef.current.scrollTop = 0;
+      } else {
+        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      }
+    }
+  }, [content, isCached]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="explain-container"
+    >
+      {content ? renderMarkdown(content) : "No explanation available."}
+    </div>
+  );
+};
+
 export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
   text,
   x,
@@ -44,6 +73,7 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
   const [explanation, setExplanation] = useState<string>('');
   const [explainLoading, setExplainLoading] = useState<boolean>(false);
   const [explainError, setExplainError] = useState<string>('');
+  const [isCached, setIsCached] = useState<boolean>(false);
 
   const tooltipRef = useRef<HTMLDivElement>(null);
 
@@ -94,11 +124,63 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
             }),
           });
           if (!res.ok) throw new Error('Explanation failed.');
-          const json = await res.json();
-          if (json.succeeded && json.data?.explanation) {
-            setExplanation(json.data.explanation);
-          } else {
-            throw new Error(json.message || 'AI explanation not found.');
+          if (!res.body) throw new Error('ReadableStream is not supported by your browser.');
+
+          setExplanation('');
+          setIsCached(false);
+          setExplainLoading(false);
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let accumulatedText = '';
+          let buffer = '';
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('data:')) {
+                const dataStr = trimmed.slice(5).trim();
+                try {
+                  const parsed = JSON.parse(dataStr);
+                  if (parsed.content) {
+                    accumulatedText += parsed.content;
+                    if (accumulatedText.startsWith('[CACHED]')) {
+                      setIsCached(true);
+                      setExplanation(accumulatedText.slice(8));
+                    } else {
+                      setExplanation(accumulatedText);
+                    }
+                  }
+                } catch (e) {
+                  console.warn('Failed to parse SSE JSON chunk:', e, dataStr);
+                }
+              }
+            }
+          }
+
+          if (buffer.trim().startsWith('data:')) {
+            const dataStr = buffer.trim().slice(5).trim();
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.content) {
+                accumulatedText += parsed.content;
+                if (accumulatedText.startsWith('[CACHED]')) {
+                  setIsCached(true);
+                  setExplanation(accumulatedText.slice(8));
+                } else {
+                  setExplanation(accumulatedText);
+                }
+              }
+            } catch (e) {
+              console.warn('Failed to parse SSE JSON chunk:', e, dataStr);
+            }
           }
         } catch (e: any) {
           setExplainError(e.message || 'AI service error.');
@@ -315,9 +397,11 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
             )}
 
             {!explainLoading && !explainError && (
-              <div className="explain-container">
-                {explanation ? renderMarkdown(explanation) : "No explanation available."}
-              </div>
+              <AutoScrollContainer
+                content={explanation || ''}
+                renderMarkdown={renderMarkdown}
+                isCached={isCached}
+              />
             )}
           </>
         )}

@@ -12,7 +12,7 @@ interface EpubViewerProps {
   onOutlineLoaded?: (outline: any[]) => void;
 }
 
-export const EpubViewer: React.FC<EpubViewerProps> = ({
+export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
   bookId,
   url,
   initialCfi,
@@ -325,4 +325,4 @@ export const EpubViewer: React.FC<EpubViewerProps> = ({
       />
     </div>
   );
-};
+});

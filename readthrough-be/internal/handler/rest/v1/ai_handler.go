@@ -1,6 +1,10 @@
 package v1
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"readthrough-be/internal/handler/rest/dto"
 	"readthrough-be/internal/model"
@@ -24,15 +28,35 @@ func (h *AIHandler) Explain(c *gin.Context) {
 		return
 	}
 
-	explanation, err := h.aiSvc.Explain(c.Request.Context(), req.Text, req.ContextSentence, req.BookTitle, req.BookAuthor, req.PageNumber)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
-		return
-	}
+	ch := make(chan string, 10)
 
-	resp := model.ExplainResponse{
-		Explanation: explanation,
-	}
+	// Set headers for Server-Sent Events (SSE)
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
 
-	c.JSON(http.StatusOK, dto.ResponseOK(resp))
+	go func() {
+		err := h.aiSvc.ExplainStream(c.Request.Context(), req.Text, req.ContextSentence, req.BookTitle, req.BookAuthor, req.PageNumber, ch)
+		if err != nil {
+			log.Printf("[AIHandler] Stream error: %v", err)
+		}
+	}()
+
+	c.Stream(func(w io.Writer) bool {
+		if token, ok := <-ch; ok {
+			eventBytes, err := json.Marshal(map[string]string{"content": token})
+			if err != nil {
+				log.Printf("[AIHandler] Failed to marshal token: %v", err)
+				return false
+			}
+			_, err = w.Write([]byte(fmt.Sprintf("data: %s\n\n", string(eventBytes))))
+			if err != nil {
+				log.Printf("[AIHandler] Failed to write token stream: %v", err)
+				return false
+			}
+			return true
+		}
+		return false
+	})
 }

@@ -11,7 +11,7 @@ interface TxtViewerProps {
 
 const CHARS_PER_PAGE = 2500;
 
-export const TxtViewer: React.FC<TxtViewerProps> = ({ bookId, url, initialPage, onPageChange, onSelection }) => {
+export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({ bookId, url, initialPage, onPageChange, onSelection }) => {
   const [pages, setPages] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState<number>(initialPage || 1);
   const [fontSize, setFontSize] = useState<number>(() => {
@@ -180,4 +180,4 @@ export const TxtViewer: React.FC<TxtViewerProps> = ({ bookId, url, initialPage, 
       </div>
     </div>
   );
-};
+});

@@ -53,7 +53,7 @@ interface HighlightBox {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const PdfViewer: React.FC<PdfViewerProps> = ({ bookId, url, initialPage, onPageChange, onSelection, onOutlineLoaded }) => {
+export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({ bookId, url, initialPage, onPageChange, onSelection, onOutlineLoaded }) => {
   const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState<number>(initialPage || 1);
   const [totalPages, setTotalPages] = useState<number>(0);
@@ -551,4 +551,4 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ bookId, url, initialPage, 
       </div>
     </div>
   );
-};
+});
