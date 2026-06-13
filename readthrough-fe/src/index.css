@@ -3389,3 +3389,8 @@ body {
   color: var(--text-secondary);
   margin-bottom: 3px;
 }
+
+/* Clear outline focus ring on tooltip and sidebar tabs */
+.tooltip-tab:focus, .sidebar-header-tab:focus {
+  outline: none;
+}

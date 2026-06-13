@@ -56,7 +56,10 @@ const renderMarkdown = (md: string) => {
     }
 
     if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      const lines = trimmed.split('\n');
+      const lines = trimmed.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.replace(/^[-*]\s*/, '').trim() !== '');
+      if (lines.length === 0) return null;
       return (
         <ul key={pIdx} className="md-ul">
           {lines.map((l, lIdx) => (
@@ -67,7 +70,10 @@ const renderMarkdown = (md: string) => {
     }
 
     if (/^\d+\.\s+/.test(trimmed)) {
-      const lines = trimmed.split('\n');
+      const lines = trimmed.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.replace(/^\d+\.\s*/, '').trim() !== '');
+      if (lines.length === 0) return null;
       return (
         <ol key={pIdx} className="md-ol">
           {lines.map((l, lIdx) => (

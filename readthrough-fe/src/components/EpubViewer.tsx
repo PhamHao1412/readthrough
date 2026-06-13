@@ -100,8 +100,12 @@ export const EpubViewer: React.FC<EpubViewerProps> = ({
               }
             } else {
               if (e.key === 'ArrowRight') {
+                (doc.activeElement as HTMLElement)?.blur();
+                (window.document.activeElement as HTMLElement)?.blur();
                 rendition.next();
               } else if (e.key === 'ArrowLeft') {
+                (doc.activeElement as HTMLElement)?.blur();
+                (window.document.activeElement as HTMLElement)?.blur();
                 rendition.prev();
               }
             }
@@ -244,8 +248,10 @@ export const EpubViewer: React.FC<EpubViewerProps> = ({
         }
       } else {
         if (e.key === 'ArrowRight') {
+          (document.activeElement as HTMLElement)?.blur();
           renditionRef.current?.next();
         } else if (e.key === 'ArrowLeft') {
+          (document.activeElement as HTMLElement)?.blur();
           renditionRef.current?.prev();
         }
       }

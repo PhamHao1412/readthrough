@@ -360,8 +360,10 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ bookId, url, initialPage, 
         }
       } else {
         if (e.key === 'ArrowRight') {
+          (document.activeElement as HTMLElement)?.blur();
           changePage(1);
         } else if (e.key === 'ArrowLeft') {
+          (document.activeElement as HTMLElement)?.blur();
           changePage(-1);
         }
       }

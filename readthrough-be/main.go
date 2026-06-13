@@ -83,7 +83,7 @@ func main() {
 	bookSvc := service.NewBookService(baseRepo, bookRepo, store)
 	translateSvc := service.NewTranslateService()
 
-	aiSvc := service.NewAIService(cfg.GeminiApiKey, cfg.GeminiModel, cfg.GeminiApiVersion, cfg.GeminiThinkingBudget)
+	aiSvc := service.NewAIService(cfg.OpenAIApiKey, cfg.OpenAIModel)
 	vocabSvc := service.NewVocabularyService(vocabRepo)
 	authSvc := service.NewAuthService(userRepo, tokenRepo)
 
