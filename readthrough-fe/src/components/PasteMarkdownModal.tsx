@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Sparkles, FileText, Loader2, Check, Copy } from 'lucide-react';
+import { X, Sparkles, Loader2 } from 'lucide-react';
 import { parseMarkdownText, MarkdownBlock } from './MdViewer';
 
 interface PasteMarkdownModalProps {

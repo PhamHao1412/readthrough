@@ -380,8 +380,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   initialCfi,
   onProgressChange,
   onSelection,
-  onOutlineLoaded,
-  theme: _theme
+  onOutlineLoaded
 }) => {
   const { fetchWithAuth } = useAuth();
   
