@@ -19,7 +19,7 @@ test: ## Run tests
 	go test -v ./...
 
 migrate-up: ## Run database migrations
-	goose -dir data/migrations postgres "$(shell grep DB.URL .env | cut -d'=' -f2)" up
+	goose -dir data/migrations postgres "$(shell grep DB_URL .env | cut -d'=' -f2-)" up
 
 migrate-down: ## Rollback database migrations
-	goose -dir data/migrations postgres "$(shell grep DB.URL .env | cut -d'=' -f2)" down
+	goose -dir data/migrations postgres "$(shell grep DB_URL .env | cut -d'=' -f2-)" down
