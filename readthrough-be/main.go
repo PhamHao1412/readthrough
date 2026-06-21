@@ -84,6 +84,16 @@ func main() {
 
 	aiExplanationRepo := repository.NewAIExplanationRepository(dbConn)
 
+	// Rate Limiter Setup
+	limiter := middleware.NewRateLimiter(cfg.RateLimitCapacity, cfg.RateLimitRate, 1*time.Hour)
+
+	// AI Credit Whitelist Setup
+	var whitelistIDs []string
+	if cfg.AIWhitelistUserIDs != "" {
+		whitelistIDs = strings.Split(cfg.AIWhitelistUserIDs, ",")
+	}
+	aiCreditManager := middleware.NewAICreditManager(whitelistIDs)
+
 	// Services
 	bookSvc := service.NewBookService(baseRepo, bookRepo, store)
 	translateSvc := service.NewTranslateService()
@@ -95,20 +105,10 @@ func main() {
 	// Handlers
 	bookHandler := v1.NewBookHandler(bookSvc)
 	translateHandler := v1.NewTranslateHandler(translateSvc)
-	aiHandler := v1.NewAIHandler(aiSvc)
+	aiHandler := v1.NewAIHandler(aiSvc, aiCreditManager)
 	healthHandler := v1.NewHealthHandler(dbConn)
 	vocabHandler := v1.NewVocabularyHandler(vocabSvc)
 	authHandler := v1.NewAuthHandler(authSvc)
-
-	// Rate Limiter Setup
-	limiter := middleware.NewRateLimiter(cfg.RateLimitCapacity, cfg.RateLimitRate, 1*time.Hour)
-
-	// AI Credit Whitelist Setup
-	var whitelistIDs []string
-	if cfg.AIWhitelistUserIDs != "" {
-		whitelistIDs = strings.Split(cfg.AIWhitelistUserIDs, ",")
-	}
-	aiCreditManager := middleware.NewAICreditManager(whitelistIDs)
 
 	// Router setup
 	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler, aiHandler, limiter, aiCreditManager)

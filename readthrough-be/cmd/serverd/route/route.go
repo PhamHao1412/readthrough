@@ -37,7 +37,6 @@ func V1Router(
 	// API Endpoints Group
 	api := r.Group("/api/v1")
 	api.Use(middleware.RateLimitMiddleware(limiter))
-	api.Use(middleware.AICreditMiddleware(aiCreditManager))
 	{
 		api.GET("/health", healthHandler.HealthCheck)
 		api.POST("/translate", translateHandler.Translate)

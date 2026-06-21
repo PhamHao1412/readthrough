@@ -19,6 +19,7 @@ import (
 type IAIService interface {
 	Explain(ctx context.Context, text string, contextSentence string, bookTitle string, bookAuthor string, pageNumber int) (string, error)
 	ExplainStream(ctx context.Context, text string, contextSentence string, bookTitle string, bookAuthor string, pageNumber int, ch chan<- string) error
+	HasCache(ctx context.Context, text string, contextSentence string) (bool, error)
 }
 
 type AIService struct {
@@ -337,4 +338,16 @@ func (s *AIService) ExplainStream(ctx context.Context, text string, contextSente
 	}
 
 	return nil
+}
+
+func (s *AIService) HasCache(ctx context.Context, text string, contextSentence string) (bool, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false, nil
+	}
+	cached, err := s.aiExplanationRepo.Get(ctx, trimmed, strings.TrimSpace(contextSentence))
+	if err != nil {
+		return false, nil
+	}
+	return cached != nil, nil
 }

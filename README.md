@@ -1,6 +1,8 @@
 # ReadThrough 📖
 > **Smart Translation Reader** — A premium reading assistant designed to help developers, students, and language learners read technical books, documents, and research papers efficiently. Highlight words to translate instantly, save vocabulary to your notebook, and get AI-powered context-aware explanations.
 
+### 🌐 Demo: [You can try it out here: https://readthrough.vercel.app/](https://readthrough.vercel.app/)
+
 ---
 
 ## 🚀 Key Features
