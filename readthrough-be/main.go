@@ -8,11 +8,14 @@ import (
 	"readthrough-be/internal/db"
 	"readthrough-be/internal/entity"
 	v1 "readthrough-be/internal/handler/rest/v1"
+	"readthrough-be/internal/middleware"
 	"readthrough-be/internal/repository"
 	"readthrough-be/internal/service"
 	"readthrough-be/internal/storage"
 	"readthrough-be/pkg/logger"
 	"readthrough-be/pkg/security"
+	"strings"
+	"time"
 
 	"readthrough-be/pkg/env"
 
@@ -97,8 +100,18 @@ func main() {
 	vocabHandler := v1.NewVocabularyHandler(vocabSvc)
 	authHandler := v1.NewAuthHandler(authSvc)
 
+	// Rate Limiter Setup
+	limiter := middleware.NewRateLimiter(cfg.RateLimitCapacity, cfg.RateLimitRate, 1*time.Hour)
+
+	// AI Credit Whitelist Setup
+	var whitelistIDs []string
+	if cfg.AIWhitelistUserIDs != "" {
+		whitelistIDs = strings.Split(cfg.AIWhitelistUserIDs, ",")
+	}
+	aiCreditManager := middleware.NewAICreditManager(whitelistIDs)
+
 	// Router setup
-	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler, aiHandler)
+	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler, aiHandler, limiter, aiCreditManager)
 
 	log.Printf("%s service running at :%s", cfg.AppName, cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {

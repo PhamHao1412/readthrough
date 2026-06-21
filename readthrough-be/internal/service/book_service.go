@@ -21,6 +21,7 @@ type IBookService interface {
 	GetBookDownloadURL(ctx context.Context, key string) (string, bool, error)
 	DeleteBook(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error
+	UpdateBookContent(ctx context.Context, id uuid.UUID, userID uuid.UUID, content string) error
 }
 
 type BookService struct {
@@ -134,4 +135,31 @@ func (s *BookService) DeleteBook(ctx context.Context, id uuid.UUID, userID uuid.
 	_ = s.store.Delete(ctx, fileName) // ignore error to avoid failing the DB operation
 
 	return nil
+}
+
+func (s *BookService) UpdateBookContent(ctx context.Context, id uuid.UUID, userID uuid.UUID, content string) error {
+	book, err := s.bookRepo.GetByID(ctx, id, userID)
+	if err != nil {
+		return err
+	}
+
+	fileName := filepath.Base(book.FilePath)
+	contentReader := strings.NewReader(content)
+	contentSize := int64(len(content))
+
+	contentType := "text/plain"
+	if book.FileType == "md" {
+		contentType = "text/markdown"
+	} else if book.FileType == "pdf" {
+		contentType = "application/pdf"
+	} else if book.FileType == "epub" {
+		contentType = "application/epub+zip"
+	}
+
+	_, err = s.store.Upload(ctx, fileName, contentReader, contentSize, contentType)
+	if err != nil {
+		return err
+	}
+
+	return s.bookRepo.UpdateSize(ctx, id, userID, contentSize)
 }

@@ -186,6 +186,36 @@ func (h *BookHandler) UpdateProgress(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.ResponseOK(true).WithMessage("Reading progress synchronized"))
 }
 
+func (h *BookHandler) UpdateContent(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, dto.ResponseUnauthorized(nil))
+		return
+	}
+	userID := userIDVal.(uuid.UUID)
+
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ResponseBadRequest(err))
+		return
+	}
+
+	var req model.UpdateBookContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ResponseBadRequest(err))
+		return
+	}
+
+	err = h.bookSvc.UpdateBookContent(c.Request.Context(), id, userID, req.Content)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.ResponseOK(true).WithMessage("Document content updated successfully"))
+}
+
 func (h *BookHandler) Delete(c *gin.Context) {
 	userIDVal, exists := c.Get("userID")
 	if !exists {

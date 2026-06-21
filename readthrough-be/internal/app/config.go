@@ -16,6 +16,11 @@ type Config struct {
 	R2BucketName      string `mapstructure:"R2_BUCKET_NAME"`
 	OpenAIApiKey      string `mapstructure:"OPENAI_API_KEY"`
 	OpenAIModel       string `mapstructure:"OPENAI_MODEL"`
+	// Rate Limiting Configuration (Token Bucket)
+	RateLimitCapacity float64 `mapstructure:"RATE_LIMIT_CAPACITY"`
+	RateLimitRate     float64 `mapstructure:"RATE_LIMIT_RATE"`
+	// AI Whitelist Configuration (comma-separated User IDs)
+	AIWhitelistUserIDs string `mapstructure:"AI_WHITELIST_USER_IDS"`
 }
 
 type PGConfig struct {

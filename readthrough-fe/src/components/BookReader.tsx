@@ -3,6 +3,7 @@ import { ArrowLeft, BookOpen, Copy, Check, AlertTriangle, Languages, Sparkles, X
 import { PdfViewer } from './PdfViewer';
 import { EpubViewer } from './EpubViewer';
 import { TxtViewer } from './TxtViewer';
+import { MdViewer } from './MdViewer';
 import { useAuth } from '../context/AuthContext';
 
 
@@ -238,7 +239,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       return findBest(outline).path;
     }
 
-    if (book.file_type === 'epub' && currentCfi) {
+    if ((book.file_type === 'epub' || book.file_type === 'md') && currentCfi) {
       // Walk the tree and find the item whose CFI matches exactly
       const findCfi = (items: any[], path = ''): string | null => {
         for (let idx = 0; idx < items.length; idx++) {
@@ -693,6 +694,10 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
 
   const handleTxtPageChange = useCallback((page: number, total: number) => {
     saveProgress(page, '', total);
+  }, [saveProgress]);
+
+  const handleMdProgressChange = useCallback((cfi: string) => {
+    saveProgress(1, cfi);
   }, [saveProgress]);
 
   const getSentenceContext = (selectedText: string): string => {
@@ -1164,6 +1169,17 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   onSelection={handleSelection}
                   theme={theme}
                   onOutlineLoaded={handleOutlineLoaded}
+                />
+              )}
+              {book.file_type === 'md' && (
+                <MdViewer
+                  bookId={book.id}
+                  url={contentUrl}
+                  initialCfi={currentCfi}
+                  onProgressChange={handleMdProgressChange}
+                  onSelection={handleSelection}
+                  onOutlineLoaded={handleOutlineLoaded}
+                  theme={theme}
                 />
               )}
               {book.file_type === 'txt' && (

@@ -16,6 +16,8 @@ func V1Router(
 	vocabHandler *v1.VocabularyHandler,
 	authHandler *v1.AuthHandler,
 	aiHandler *v1.AIHandler,
+	limiter *middleware.RateLimiter,
+	aiCreditManager *middleware.AICreditManager,
 ) {
 	// CORS Middleware
 	r.Use(func(c *gin.Context) {
@@ -34,6 +36,8 @@ func V1Router(
 
 	// API Endpoints Group
 	api := r.Group("/api/v1")
+	api.Use(middleware.RateLimitMiddleware(limiter))
+	api.Use(middleware.AICreditMiddleware(aiCreditManager))
 	{
 		api.GET("/health", healthHandler.HealthCheck)
 		api.POST("/translate", translateHandler.Translate)
@@ -59,6 +63,7 @@ func V1Router(
 			books.GET("/:id/download-url", bookHandler.GetDownloadURL)
 			books.DELETE("/:id", bookHandler.Delete)
 			books.PUT("/:id/progress", bookHandler.UpdateProgress)
+			books.PUT("/:id/content", bookHandler.UpdateContent)
 		}
 
 		// Vocabularies Routes (Protected)

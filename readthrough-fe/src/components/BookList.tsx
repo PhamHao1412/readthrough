@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, Search, BookOpen, FileText, FileDown, Plus, AlertCircle, CheckCircle, Loader2, Trash2 } from 'lucide-react';
+import { UploadCloud, Search, BookOpen, FileText, FileDown, Plus, AlertCircle, CheckCircle, Loader2, Trash2, Sparkles } from 'lucide-react';
 import { Book } from './BookReader';
+import { PasteMarkdownModal } from './PasteMarkdownModal';
 
 interface BookListProps {
   books: Book[];
@@ -20,13 +21,14 @@ export const BookList: React.FC<BookListProps> = ({
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload = async (file: File) => {
     if (!file) return;
     const fileExt = file.name.split('.').pop()?.toLowerCase();
-    if (fileExt !== 'pdf' && fileExt !== 'epub' && fileExt !== 'txt') {
-      setError('Unsupported file format. Only .pdf, .epub, or .txt files are allowed.');
+    if (fileExt !== 'pdf' && fileExt !== 'epub' && fileExt !== 'txt' && fileExt !== 'md') {
+      setError('Unsupported file format. Only .pdf, .epub, .txt, or .md files are allowed.');
       return;
     }
 
@@ -80,6 +82,59 @@ export const BookList: React.FC<BookListProps> = ({
     }
   };
 
+  const handlePasteSave = async (content: string, title: string, author: string) => {
+    const file = new File([content], `${title}.md`, { type: 'text/markdown' });
+    
+    setUploading(true);
+    setUploadProgress(0);
+    setError('');
+    setSuccess('');
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('title', title);
+    formData.append('author', author);
+
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          setUploadProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      });
+
+      const uploadPromise = new Promise<void>((resolve, reject) => {
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            let msg = 'Save failed.';
+            try { msg = JSON.parse(xhr.responseText).message || msg; } catch {}
+            reject(new Error(msg));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Server connection error.'));
+      });
+
+      xhr.open('POST', '/api/v1/books/upload');
+      const token = localStorage.getItem('readthrough_access_token');
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+      xhr.send(formData);
+      await uploadPromise;
+
+      setSuccess(`Successfully created and saved "${title}"`);
+      onUploadSuccess();
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err: any) {
+      setError(err.message || 'An error occurred during save.');
+      throw err;
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const onDragOver = (e: React.DragEvent) => e.preventDefault();
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -121,14 +176,22 @@ export const BookList: React.FC<BookListProps> = ({
           disabled={uploading}
         >
           <Plus size={17} />
-          Upload new document
+          Upload file
+        </button>
+        <button
+          className="paste-btn"
+          onClick={() => setIsPasteModalOpen(true)}
+          disabled={uploading}
+        >
+          <Sparkles size={17} />
+          Paste Markdown
         </button>
         <input
           type="file"
           ref={fileInputRef}
           onChange={(e) => e.target.files && handleUpload(e.target.files[0])}
           style={{ display: 'none' }}
-          accept=".pdf,.epub,.txt"
+          accept=".pdf,.epub,.txt,.md"
         />
       </div>
 
@@ -174,14 +237,14 @@ export const BookList: React.FC<BookListProps> = ({
             <UploadCloud size={64} />
           </div>
           <h3>Library is empty</h3>
-          <p>Drag and drop .pdf, .epub, or .txt files here or click to start uploading.</p>
+          <p>Drag and drop .pdf, .epub, .txt, or .md files here or click to start uploading.</p>
         </div>
       ) : (
         <div className="books-grid">
           {filteredBooks.map((book) => {
-            const progressPercent = book.total_pages > 0
+            const progressPercent = book.total_pages > 0 && book.file_type !== 'md'
               ? Math.round((book.current_page / book.total_pages) * 100)
-              : book.epub_cfi ? 50 : 0;
+              : (book.epub_cfi || book.file_type === 'md') ? 50 : 0;
 
             return (
               <div
@@ -205,6 +268,8 @@ export const BookList: React.FC<BookListProps> = ({
                       <FileDown size={22} />
                     ) : book.file_type === 'epub' ? (
                       <BookOpen size={22} />
+                    ) : book.file_type === 'md' ? (
+                      <Sparkles size={22} />
                     ) : (
                       <FileText size={22} />
                     )}
@@ -219,10 +284,10 @@ export const BookList: React.FC<BookListProps> = ({
                   <div className="book-meta">
                     <span>{book.file_type.toUpperCase()} • {formatSize(book.file_size)}</span>
                     <span>
-                      {book.total_pages > 0 && book.file_type !== 'epub'
+                      {book.total_pages > 0 && book.file_type !== 'epub' && book.file_type !== 'md'
                         ? `Page ${book.current_page}/${book.total_pages}`
-                        : book.file_type === 'epub'
-                        ? 'EPUB'
+                        : book.file_type === 'epub' || book.file_type === 'md'
+                        ? book.file_type.toUpperCase()
                         : 'Unread'}
                     </span>
                   </div>
@@ -238,6 +303,11 @@ export const BookList: React.FC<BookListProps> = ({
           })}
         </div>
       )}
+      <PasteMarkdownModal
+        isOpen={isPasteModalOpen}
+        onClose={() => setIsPasteModalOpen(false)}
+        onSave={handlePasteSave}
+      />
     </div>
   );
 };

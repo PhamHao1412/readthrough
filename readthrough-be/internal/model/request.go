@@ -6,6 +6,10 @@ type UpdateProgressRequest struct {
 	TotalPages  int    `json:"total_pages"`
 }
 
+type UpdateBookContentRequest struct {
+	Content string `json:"content" binding:"required"`
+}
+
 type TranslateRequest struct {
 	Text string `json:"text" binding:"required"`
 }

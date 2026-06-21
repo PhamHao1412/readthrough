@@ -14,6 +14,7 @@ type IBookRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*entity.Book, error)
 	Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error
+	UpdateSize(ctx context.Context, id uuid.UUID, userID uuid.UUID, size int64) error
 }
 
 type BookRepository struct {
@@ -63,4 +64,8 @@ func (r *BookRepository) UpdateProgress(ctx context.Context, id uuid.UUID, userI
 		updates["total_pages"] = totalPages
 	}
 	return r.db.WithContext(ctx).Model(&entity.Book{}).Where("id = ? AND user_id = ?", id, userID).Updates(updates).Error
+}
+
+func (r *BookRepository) UpdateSize(ctx context.Context, id uuid.UUID, userID uuid.UUID, size int64) error {
+	return r.db.WithContext(ctx).Model(&entity.Book{}).Where("id = ? AND user_id = ?", id, userID).Update("file_size", size).Error
 }
