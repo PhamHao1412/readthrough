@@ -359,7 +359,7 @@ const MathRenderer: React.FC<{ math: string; displayMode: boolean }> = ({ math, 
           setError(e.message || 'KaTeX error');
         }
       })
-      .catch((err) => {
+      .catch(() => {
         if (active) setError('Failed to load KaTeX');
       });
     return () => {
