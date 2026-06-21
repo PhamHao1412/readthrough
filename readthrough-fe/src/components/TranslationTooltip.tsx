@@ -83,9 +83,17 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
       setLoading(true);
       setError('');
       try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json'
+        };
+        const token = localStorage.getItem('readthrough_access_token');
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const res = await fetch('/api/v1/translate', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: headers,
           body: JSON.stringify({ text }),
         });
         if (!res.ok) throw new Error('Translation failed. Please try again.');
@@ -112,9 +120,17 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
         setExplainLoading(true);
         setExplainError('');
         try {
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json'
+          };
+          const token = localStorage.getItem('readthrough_access_token');
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+          }
+
           const res = await fetch('/api/v1/explain', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: headers,
             body: JSON.stringify({
               text,
               context_sentence: contextSentence || '',
@@ -123,7 +139,20 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
               page_number: pageNumber || 1,
             }),
           });
-          if (!res.ok) throw new Error('Explanation failed.');
+          if (!res.ok) {
+            let errMsg = 'Unable to get AI explanation. Please try again later.';
+            if (res.status === 402) {
+              errMsg = 'You have exceeded the trial limit for AI Explanation. Please upgrade your account or contact the administrator.';
+            } else if (res.status === 429) {
+              errMsg = 'Too many requests. Please wait a few minutes and try again.';
+            } else {
+              try {
+                const errJson = await res.json();
+                if (errJson.message) errMsg = errJson.message;
+              } catch {}
+            }
+            throw new Error(errMsg);
+          }
           if (!res.body) throw new Error('ReadableStream is not supported by your browser.');
 
           setExplanation('');

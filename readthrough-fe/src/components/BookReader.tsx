@@ -883,7 +883,20 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         }),
       });
 
-      if (!res.ok) throw new Error('Explanation failed');
+      if (!res.ok) {
+        let errMsg = 'Unable to get AI explanation. Please try again later.';
+        if (res.status === 402) {
+          errMsg = 'You have exceeded the trial limit for AI Explanation. Please upgrade your account or contact the administrator.';
+        } else if (res.status === 429) {
+          errMsg = 'Too many requests. Please wait a few minutes and try again.';
+        } else {
+          try {
+            const errJson = await res.json();
+            if (errJson.message) errMsg = errJson.message;
+          } catch {}
+        }
+        throw new Error(errMsg);
+      }
       if (!res.body) throw new Error('ReadableStream is not supported by your browser.');
 
       setTranslations(prev =>

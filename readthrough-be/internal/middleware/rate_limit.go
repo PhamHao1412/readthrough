@@ -283,8 +283,8 @@ func (ac *AICreditManager) GetAICountInfo(key string, isUser bool) (count int) {
 func AICreditMiddleware(manager *AICreditManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// Intercept AI explain and Translate routes
-		if path == "/api/v1/explain" || path == "/api/v1/translate" {
+		// Intercept AI explain route only
+		if path == "/api/v1/explain" {
 			if !manager.AllowAI(c) {
 				errLimit := errors.New("ai credit limit exceeded")
 				c.JSON(http.StatusPaymentRequired, dto.Response{
