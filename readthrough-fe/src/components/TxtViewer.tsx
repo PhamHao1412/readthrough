@@ -6,12 +6,27 @@ interface TxtViewerProps {
   url: string;
   initialPage: number;
   onPageChange: (page: number, total: number) => void;
-  onSelection: (text: string) => void;
+  onSelection: (text: string, x?: number, y?: number) => void;
+  readThroughActive?: boolean;
+  rtSettings?: {
+    fontFamily: string;
+    fontSizeLevel: number;
+    margin: string;
+    lineHeight: string;
+  };
 }
 
 const CHARS_PER_PAGE = 2500;
 
-export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({ bookId, url, initialPage, onPageChange, onSelection }) => {
+export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({
+  bookId,
+  url,
+  initialPage,
+  onPageChange,
+  onSelection,
+  readThroughActive = false,
+  rtSettings,
+}) => {
   const [pages, setPages] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState<number>(initialPage || 1);
   const [fontSize, setFontSize] = useState<number>(() => {
@@ -115,19 +130,79 @@ export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({ bookId, url, in
     }
   }, [currentPage]);
 
+  // Handle next/prev page events from BookReader
+  useEffect(() => {
+    const handleNext = () => {
+      changePage(1);
+    };
+    const handlePrev = () => {
+      changePage(-1);
+    };
+
+    window.addEventListener('readthrough-next-page', handleNext);
+    window.addEventListener('readthrough-prev-page', handlePrev);
+    return () => {
+      window.removeEventListener('readthrough-next-page', handleNext);
+      window.removeEventListener('readthrough-prev-page', handlePrev);
+    };
+  }, [changePage]);
+
   const handleMouseUp = (e: React.MouseEvent) => {
     e.stopPropagation(); // Stop event from reaching browser extensions
+    // Skip – double-click will be handled by handleDblClick
+    if (e.detail >= 2) return;
     const sel = window.getSelection();
     if (!sel) return;
     const text = sel.toString().trim();
     if (text.length > 0) {
-      onSelection(text);
+      try {
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.bottom;
+        onSelection(text, x, y);
+      } catch (err) {
+        onSelection(text);
+      }
     }
   };
 
   const handleDblClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation(); // Stop event from reaching browser extensions
+    // Use setTimeout to let the browser finalize its native word selection first
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+
+      // Strip leading/trailing punctuation so double-clicking "word," returns "word"
+      const raw = sel.toString();
+      const cleaned = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim();
+      if (!cleaned) return;
+
+      try {
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.bottom;
+        onSelection(cleaned, x, y);
+      } catch (err) {
+        onSelection(cleaned);
+      }
+    }, 10);
+  };
+
+  const txtStyles = readThroughActive && rtSettings ? {
+    fontFamily: rtSettings.fontFamily === 'serif' ? "'Lora', Georgia, serif" :
+                rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
+                rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
+                rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" : undefined,
+    fontSize: `${14 + (rtSettings.fontSizeLevel - 1) * 2}px`,
+    lineHeight: rtSettings.lineHeight,
+    paddingLeft: rtSettings.margin === 'narrow' ? '4%' : rtSettings.margin === 'normal' ? '12%' : '20%',
+    paddingRight: rtSettings.margin === 'narrow' ? '4%' : rtSettings.margin === 'normal' ? '12%' : '20%',
+  } : {
+    fontSize: `${fontSize}px`
   };
 
   if (loading) {
@@ -150,31 +225,33 @@ export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({ bookId, url, in
   return (
     <div className="txt-viewer">
       {/* Controls */}
-      <div className="txt-controls">
-        <div className="pdf-controls-group">
-          <button className="ctrl-btn" onClick={() => changePage(-1)} disabled={currentPage <= 1}>
-            <ChevronLeft size={20} />
-          </button>
-          <span className="ctrl-label">Page {currentPage} / {pages.length}</span>
-          <button className="ctrl-btn" onClick={() => changePage(1)} disabled={currentPage >= pages.length}>
-            <ChevronRight size={20} />
-          </button>
-        </div>
+      {!readThroughActive && (
+        <div className="txt-controls">
+          <div className="pdf-controls-group">
+            <button className="ctrl-btn" onClick={() => changePage(-1)} disabled={currentPage <= 1}>
+              <ChevronLeft size={20} />
+            </button>
+            <span className="ctrl-label">Page {currentPage} / {pages.length}</span>
+            <button className="ctrl-btn" onClick={() => changePage(1)} disabled={currentPage >= pages.length}>
+              <ChevronRight size={20} />
+            </button>
+          </div>
 
-        <div className="pdf-controls-group">
-          <button className="ctrl-btn" onClick={() => setFontSize(p => Math.max(14, p - 2))} title="Decrease font size">
-            <Type size={13} />
-          </button>
-          <span className="ctrl-label">Font size: {fontSize}px</span>
-          <button className="ctrl-btn" onClick={() => setFontSize(p => Math.min(32, p + 2))} title="Increase font size">
-            <Type size={20} />
-          </button>
+          <div className="pdf-controls-group">
+            <button className="ctrl-btn" onClick={() => setFontSize(p => Math.max(14, p - 2))} title="Decrease font size">
+              <Type size={13} />
+            </button>
+            <span className="ctrl-label">Font size: {fontSize}px</span>
+            <button className="ctrl-btn" onClick={() => setFontSize(p => Math.min(32, p + 2))} title="Increase font size">
+              <Type size={20} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Content */}
       <div className="txt-body" ref={textRef} onMouseUp={handleMouseUp} onDoubleClick={handleDblClick}>
-        <div className="txt-content" style={{ fontSize: `${fontSize}px` }}>
+        <div className="txt-content" style={txtStyles}>
           {pages[currentPage - 1]}
         </div>
       </div>

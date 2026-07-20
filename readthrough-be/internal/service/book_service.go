@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"path/filepath"
@@ -53,12 +55,21 @@ func (s *BookService) UploadBook(ctx context.Context, userID uuid.UUID, fileHead
 	}
 	defer src.Close()
 
+	contentBytes, err := io.ReadAll(src)
+	if err != nil {
+		return nil, err
+	}
+
+	actualReadSize := int64(len(contentBytes))
+	fmt.Printf("[UploadBookDebug] fileHeader.Size: %d, actualReadSize: %d, Filename: %s\n", fileHeader.Size, actualReadSize, fileHeader.Filename)
+
 	contentType := fileHeader.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
-	filePath, err := s.store.Upload(ctx, fileName, src, fileHeader.Size, contentType)
+	contentReader := bytes.NewReader(contentBytes)
+	filePath, err := s.store.Upload(ctx, fileName, contentReader, actualReadSize, contentType)
 	if err != nil {
 		return nil, err
 	}

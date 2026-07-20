@@ -10,8 +10,9 @@ interface PdfViewerProps {
   url: string;
   initialPage: number;
   onPageChange: (page: number, total: number) => void;
-  onSelection: (text: string) => void;
+  onSelection: (text: string, x?: number, y?: number) => void;
   onOutlineLoaded?: (outline: any[]) => void;
+  readThroughActive?: boolean;
 }
 
 /**
@@ -46,14 +47,19 @@ interface HighlightBox {
  * and return { word, wordStart, wordEnd } so the caller can
  * compute the word's bounding box within the text item.
  */
-// Obsolete coordinate functions removed. Using native selection Range rects instead.
-
-
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({ bookId, url, initialPage, onPageChange, onSelection, onOutlineLoaded }) => {
+
+export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
+  bookId,
+  url,
+  initialPage,
+  onPageChange,
+  onSelection,
+  onOutlineLoaded,
+  readThroughActive = false,
+}) => {
   const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState<number>(initialPage || 1);
   const [totalPages, setTotalPages] = useState<number>(0);
@@ -375,19 +381,35 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({ bookId, url, in
     };
   }, [changePage, zoom]);
 
+  // Handle next/prev page events from BookReader
+  useEffect(() => {
+    const handleNext = () => {
+      changePage(1);
+    };
+    const handlePrev = () => {
+      changePage(-1);
+    };
+
+    window.addEventListener('readthrough-next-page', handleNext);
+    window.addEventListener('readthrough-prev-page', handlePrev);
+    return () => {
+      window.removeEventListener('readthrough-next-page', handleNext);
+      window.removeEventListener('readthrough-prev-page', handlePrev);
+    };
+  }, [changePage]);
+
   // ── Show highlight ─────────────────────────────────────────────
   const showHighlight = useCallback((box: Omit<HighlightBox, 'key'>) => {
     setHighlight({ ...box, key: Date.now() });
   }, []);
 
-  // ── Fire translation (with dedup) ──────────────────────────────
-  const fireWord = useCallback((word: string) => {
+  const fireWord = useCallback((word: string, x?: number, y?: number) => {
     const w = word.trim();
     if (!w) return;
     if (w === lastWordRef.current) return;
 
     lastWordRef.current = w;
-    onSelection(w);
+    onSelection(w, x, y);
     window.getSelection()?.removeAllRanges();
   }, [onSelection]);
 
@@ -395,34 +417,145 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({ bookId, url, in
   const handleDblClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation(); // Stop event from reaching browser extensions
 
-    requestAnimationFrame(() => {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    const clickX = e.clientX;
+    const clickY = e.clientY;
 
-      const range = sel.getRangeAt(0);
-      const word = range.toString().trim();
+    // Use setTimeout of 50ms to ensure the browser's native selection is completed and finalized
+    setTimeout(() => {
+      const textLayer = textLayerRef.current;
+      const container = containerRef.current;
+      if (!textLayer || !container) return;
+
+      // ── Step 1: Find the exact text node + character offset at the click point ──
+      // caretRangeFromPoint gives us the exact character position under the cursor,
+      // bypassing browser's double-click selection which may include punctuation.
+      const caretRange = (document as any).caretRangeFromPoint?.(clickX, clickY)
+        ?? (document as any).caretPositionFromPoint?.(clickX, clickY);
+      if (!caretRange) return;
+
+      let clickNode: Text | null = null;
+      let clickOffset = 0;
+
+      if (caretRange.startContainer?.nodeType === Node.TEXT_NODE) {
+        // Standard Range from caretRangeFromPoint
+        clickNode = caretRange.startContainer as Text;
+        clickOffset = caretRange.startOffset;
+      } else if (caretRange.offsetNode?.nodeType === Node.TEXT_NODE) {
+        // CaretPosition from caretPositionFromPoint (Firefox)
+        clickNode = caretRange.offsetNode as Text;
+        clickOffset = caretRange.offset;
+      }
+
+      if (!clickNode || !textLayer.contains(clickNode)) return;
+
+      // ── Step 2: Gather all text nodes in the text layer (in reading order) ──
+      const wordCharRegex = /^[\p{L}\p{N}_']$/u;
+      const walk = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT, null);
+      const allNodes: Text[] = [];
+      let n: Node | null;
+      while ((n = walk.nextNode())) {
+        if ((n as Text).textContent?.trim()) allNodes.push(n as Text);
+      }
+
+      const nodeIdx = allNodes.indexOf(clickNode);
+      if (nodeIdx === -1) return;
+
+      // ── Step 3: Expand word start (backward, potentially across sibling spans) ──
+      let wordStartNode: Text = clickNode;
+      let wordStartOffset: number = clickOffset;
+
+      // Walk backward in current node
+      while (wordStartOffset > 0 && wordCharRegex.test(clickNode.textContent![wordStartOffset - 1])) {
+        wordStartOffset--;
+      }
+      // If we reached the beginning of the node, try previous nodes
+      if (wordStartOffset === 0) {
+        for (let i = nodeIdx - 1; i >= 0; i--) {
+          const prevNode = allNodes[i];
+          const prevText = prevNode.textContent || '';
+          let off = prevText.length;
+          while (off > 0 && wordCharRegex.test(prevText[off - 1])) off--;
+          if (off < prevText.length) {
+            wordStartNode = prevNode;
+            wordStartOffset = off;
+            if (off > 0) break; // stopped inside node
+            // off === 0: entire node is word chars, keep looking back
+          } else {
+            break; // no word chars at end of prev node
+          }
+        }
+      }
+
+      // ── Step 4: Expand word end (forward, potentially across sibling spans) ──
+      let wordEndNode: Text = clickNode;
+      let wordEndOffset: number = clickOffset;
+
+      // Walk forward in current node
+      const clickText = clickNode.textContent || '';
+      while (wordEndOffset < clickText.length && wordCharRegex.test(clickText[wordEndOffset])) {
+        wordEndOffset++;
+      }
+      // If we reached the end of the node, try next nodes
+      if (wordEndOffset === clickText.length) {
+        for (let i = nodeIdx + 1; i < allNodes.length; i++) {
+          const nextNode = allNodes[i];
+          const nextText = nextNode.textContent || '';
+          let off = 0;
+          while (off < nextText.length && wordCharRegex.test(nextText[off])) off++;
+          if (off > 0) {
+            wordEndNode = nextNode;
+            wordEndOffset = off;
+            if (off < nextText.length) break; // stopped inside node
+            // off === nextText.length: entire node is word chars, keep looking forward
+          } else {
+            break; // no word chars at start of next node
+          }
+        }
+      }
+
+      // ── Step 5: Build the clean word range ──
+      const wordRange = document.createRange();
+      wordRange.setStart(wordStartNode, wordStartOffset);
+      wordRange.setEnd(wordEndNode, wordEndOffset);
+
+      const word = wordRange.toString().trim();
       if (!word) return;
 
-      const rects = range.getClientRects();
+      console.log('[ReadThrough PDF] Word from dblclick:', word);
+
+      // Update visual selection to match the exact word
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(wordRange);
+      }
+
+      // ── Step 6: Compute highlight box from the clean word range rects ──
+      const rects = wordRange.getClientRects();
       if (rects.length === 0) return;
 
-      const container = containerRef.current;
-      if (!container) return;
-
       const containerRect = container.getBoundingClientRect();
-      const rect = rects[0];
+      let minLeft = Infinity, minTop = Infinity, maxRight = -Infinity, maxBottom = -Infinity;
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (r.left < minLeft) minLeft = r.left;
+        if (r.top < minTop) minTop = r.top;
+        if (r.right > maxRight) maxRight = r.right;
+        if (r.bottom > maxBottom) maxBottom = r.bottom;
+      }
 
       const box = {
-        left: rect.left - containerRect.left,
-        top: rect.top - containerRect.top,
-        width: rect.width,
-        height: rect.height,
+        left: minLeft - containerRect.left,
+        top: minTop - containerRect.top,
+        width: maxRight - minLeft,
+        height: maxBottom - minTop,
       };
 
       showHighlight(box);
-      fireWord(word);
-    });
+      fireWord(word, minLeft + (maxRight - minLeft) / 2, maxBottom);
+    }, 50);
   }, [fireWord, showHighlight]);
+
 
   // ── MOUSEUP: handle drag / range selections ────────────────────
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
@@ -432,12 +565,19 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({ bookId, url, in
 
     requestAnimationFrame(() => {
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) return;
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
       const text = sel.toString().trim();
       if (!text || text === lastWordRef.current) return;
 
-      lastWordRef.current = text;
-      onSelection(text);
+      try {
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        lastWordRef.current = text;
+        onSelection(text, rect.left + rect.width / 2, rect.bottom);
+      } catch (err) {
+        lastWordRef.current = text;
+        onSelection(text);
+      }
     });
   }, [onSelection]);
 
@@ -491,31 +631,33 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({ bookId, url, in
   return (
     <div className="pdf-viewer">
       {/* Controls */}
-      <div className="pdf-controls">
-        <div className="pdf-controls-group">
-          <button className="ctrl-btn" onClick={() => changePage(-1)} disabled={pageNumber <= 1}>
-            <ChevronLeft size={20} />
-          </button>
-          <span className="ctrl-label">Page {pageNumber} / {totalPages}</span>
-          <button className="ctrl-btn" onClick={() => changePage(1)} disabled={pageNumber >= totalPages}>
-            <ChevronRight size={20} />
-          </button>
-        </div>
+      {!readThroughActive && (
+        <div className="pdf-controls">
+          <div className="pdf-controls-group">
+            <button className="ctrl-btn" onClick={() => changePage(-1)} disabled={pageNumber <= 1}>
+              <ChevronLeft size={20} />
+            </button>
+            <span className="ctrl-label">Page {pageNumber} / {totalPages}</span>
+            <button className="ctrl-btn" onClick={() => changePage(1)} disabled={pageNumber >= totalPages}>
+              <ChevronRight size={20} />
+            </button>
+          </div>
 
-        <div className="pdf-controls-group">
-          <button className="ctrl-btn" onClick={() => zoom(-0.15)} disabled={scale <= 0.5} title="Zoom out">
-            <ZoomOut size={18} />
-          </button>
-          <span className="ctrl-label">{Math.round(scale * 100)}%</span>
-          <button className="ctrl-btn" onClick={() => zoom(0.15)} disabled={scale >= 3.0} title="Zoom in">
-            <ZoomIn size={18} />
-          </button>
-          <div className="ctrl-sep" />
-          <button className="ctrl-btn" onClick={fitWidth} title="Fit width">
-            <Maximize2 size={16} />
-          </button>
+          <div className="pdf-controls-group">
+            <button className="ctrl-btn" onClick={() => zoom(-0.15)} disabled={scale <= 0.5} title="Zoom out">
+              <ZoomOut size={18} />
+            </button>
+            <span className="ctrl-label">{Math.round(scale * 100)}%</span>
+            <button className="ctrl-btn" onClick={() => zoom(0.15)} disabled={scale >= 3.0} title="Zoom in">
+              <ZoomIn size={18} />
+            </button>
+            <div className="ctrl-sep" />
+            <button className="ctrl-btn" onClick={fitWidth} title="Fit width">
+              <Maximize2 size={16} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* PDF canvas + text layer + highlight overlay */}
       <div className="pdf-canvas-wrapper" ref={wrapperRef}>

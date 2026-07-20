@@ -7,9 +7,16 @@ interface EpubViewerProps {
   url: string;
   initialCfi: string;
   onProgressChange: (cfi: string) => void;
-  onSelection: (text: string) => void;
+  onSelection: (text: string, x?: number, y?: number) => void;
   theme: 'light' | 'dark' | 'sepia';
   onOutlineLoaded?: (outline: any[]) => void;
+  readThroughActive?: boolean;
+  rtSettings?: {
+    fontFamily: string;
+    fontSizeLevel: number;
+    margin: string;
+    lineHeight: string;
+  };
 }
 
 export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
@@ -20,6 +27,8 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
   onSelection,
   theme,
   onOutlineLoaded,
+  readThroughActive = false,
+  rtSettings,
 }) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
@@ -73,12 +82,28 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
           width: '100%',
           height: '100%',
           spread: 'none',
-          flow: 'scrolled-doc',
+          flow: readThroughActive ? 'paginated' : 'scrolled-doc',
         });
         renditionRef.current = rendition;
 
         rendition.hooks.content.register((contents: any) => {
           const doc = contents.document;
+
+          if (readThroughActive) {
+            const style = doc.createElement('style');
+            style.id = 'epub-kindle-transparent-override';
+            style.innerHTML = `
+              * {
+                background-color: transparent !important;
+              }
+              img {
+                mix-blend-mode: multiply;
+                opacity: 0.85;
+              }
+            `;
+            doc.head.appendChild(style);
+          }
+
           // Stop propagation inside the iframe to block external extensions
           doc.addEventListener('mouseup', (e: MouseEvent) => {
             e.stopPropagation();
@@ -86,6 +111,11 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
           doc.addEventListener('dblclick', (e: MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
+          }, true);
+          doc.addEventListener('mousedown', () => {
+            if (readThroughActive) {
+              window.parent.dispatchEvent(new CustomEvent('readthrough-click-outside'));
+            }
           }, true);
           // Keydown listener inside the iframe for arrow navigation and Command +/- Zoom
           doc.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -107,6 +137,10 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
                 (doc.activeElement as HTMLElement)?.blur();
                 (window.document.activeElement as HTMLElement)?.blur();
                 rendition.prev();
+              } else if (e.key === 'Escape') {
+                if (readThroughActive) {
+                  window.parent.dispatchEvent(new CustomEvent('readthrough-escape-key'));
+                }
               }
             }
           });
@@ -114,53 +148,6 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
 
         await rendition.display(initialCfi || undefined);
         if (!active) return;
-
-        rendition.themes.register('light', {
-          body: {
-            'font-family': "'Lora', 'Playfair Display', Georgia, serif !important",
-            'line-height': '1.85 !important',
-            'font-size': `${fontSize}% !important`,
-            'color': '#1a1916 !important',
-            'background-color': '#ffffff !important',
-            'padding': '0 24px !important',
-          },
-          p: {
-            'margin-bottom': '1.5em !important',
-            'text-align': 'justify !important',
-          }
-        });
-
-        rendition.themes.register('dark', {
-          body: {
-            'font-family': "'Lora', 'Playfair Display', Georgia, serif !important",
-            'line-height': '1.85 !important',
-            'font-size': `${fontSize}% !important`,
-            'color': '#f0ede8 !important',
-            'background-color': '#2a2926 !important',
-            'padding': '0 24px !important',
-          },
-          p: {
-            'margin-bottom': '1.5em !important',
-            'text-align': 'justify !important',
-          }
-        });
-
-        rendition.themes.register('sepia', {
-          body: {
-            'font-family': "'Lora', 'Playfair Display', Georgia, serif !important",
-            'line-height': '1.85 !important',
-            'font-size': `${fontSize}% !important`,
-            'color': '#433422 !important',
-            'background-color': '#faf6eb !important',
-            'padding': '0 24px !important',
-          },
-          p: {
-            'margin-bottom': '1.5em !important',
-            'text-align': 'justify !important',
-          }
-        });
-
-        rendition.themes.select(theme);
 
         rendition.on('relocated', (location: any) => {
           if (location?.start?.cfi) onProgressChange(location.start.cfi);
@@ -182,9 +169,25 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
 
         rendition.on('selected', (_cfiRange: string, contents: any) => {
           const sel = contents.window.getSelection();
-          const text = sel?.toString().trim();
+          const raw = sel?.toString() || '';
+          // Strip leading/trailing punctuation so double-clicking "word," returns "word"
+          const text = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim();
           if (text && text.length > 0) {
-            onSelection(text);
+            try {
+              const range = sel.getRangeAt(0);
+              const rect = range.getBoundingClientRect();
+              const iframe = containerRef.current?.querySelector('iframe');
+              if (iframe) {
+                const iframeRect = iframe.getBoundingClientRect();
+                const x = rect.left + rect.width / 2 + iframeRect.left;
+                const y = rect.bottom + iframeRect.top;
+                onSelection(text, x, y);
+              } else {
+                onSelection(text);
+              }
+            } catch (err) {
+              onSelection(text);
+            }
           }
         });
 
@@ -200,7 +203,92 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
       active = false;
       if (bookRef.current) bookRef.current.destroy();
     };
-  }, [url]);
+  }, [url, readThroughActive]);
+
+  // Update styles dynamically when settings or theme changes
+  useEffect(() => {
+    if (!renditionRef.current) return;
+    
+    // Calculate values
+    const activeFontSize = readThroughActive && rtSettings ? (80 + (rtSettings.fontSizeLevel - 1) * 15) : fontSize;
+    const activePadding = readThroughActive && rtSettings
+      ? (rtSettings.margin === 'narrow' ? '0 4%' : rtSettings.margin === 'normal' ? '0 10%' : '0 18%')
+      : '0 24px';
+    const activeLineHeight = readThroughActive && rtSettings ? rtSettings.lineHeight : '1.85';
+    const activeFontFamily = readThroughActive && rtSettings
+      ? (rtSettings.fontFamily === 'serif' ? "'Lora', Georgia, serif" :
+         rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
+         rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
+         rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" :
+         "'Lora', Georgia, serif")
+      : "'Lora', 'Playfair Display', Georgia, serif";
+
+    const activeBgColor = readThroughActive ? 'transparent !important' : '';
+
+    renditionRef.current.themes.register('light', {
+      body: {
+        'font-family': `${activeFontFamily} !important`,
+        'line-height': `${activeLineHeight} !important`,
+        'font-size': `${activeFontSize}% !important`,
+        'color': '#2b2b2d !important',
+        'background-color': activeBgColor || '#ffffff !important',
+        'padding': `${activePadding} !important`,
+      },
+      p: {
+        'margin-bottom': '1.5em !important',
+        'text-align': 'justify !important',
+      }
+    });
+
+    renditionRef.current.themes.register('dark', {
+      body: {
+        'font-family': `${activeFontFamily} !important`,
+        'line-height': `${activeLineHeight} !important`,
+        'font-size': `${activeFontSize}% !important`,
+        'color': '#e0deda !important',
+        'background-color': activeBgColor || '#2a2926 !important',
+        'padding': `${activePadding} !important`,
+      },
+      p: {
+        'margin-bottom': '1.5em !important',
+        'text-align': 'justify !important',
+      }
+    });
+
+    renditionRef.current.themes.register('sepia', {
+      body: {
+        'font-family': `${activeFontFamily} !important`,
+        'line-height': `${activeLineHeight} !important`,
+        'font-size': `${activeFontSize}% !important`,
+        'color': '#3b2c1b !important',
+        'background-color': activeBgColor || '#faf6eb !important',
+        'padding': `${activePadding} !important`,
+      },
+      p: {
+        'margin-bottom': '1.5em !important',
+        'text-align': 'justify !important',
+      }
+    });
+
+    renditionRef.current.themes.select(theme);
+  }, [theme, readThroughActive, rtSettings, fontSize]);
+
+  // Handle page turn events from BookReader
+  useEffect(() => {
+    const handleNext = () => {
+      renditionRef.current?.next();
+    };
+    const handlePrev = () => {
+      renditionRef.current?.prev();
+    };
+
+    window.addEventListener('readthrough-next-page', handleNext);
+    window.addEventListener('readthrough-prev-page', handlePrev);
+    return () => {
+      window.removeEventListener('readthrough-next-page', handleNext);
+      window.removeEventListener('readthrough-prev-page', handlePrev);
+    };
+  }, []);
 
   // Jump to specific CFI location (TOC jumps)
   useEffect(() => {

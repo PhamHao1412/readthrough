@@ -1,9 +1,10 @@
 import React, { useCallback, useState, useEffect, useRef, useMemo } from 'react';
-import { ArrowLeft, BookOpen, Copy, Check, AlertTriangle, Languages, Sparkles, X, Coffee, Sun, Moon, Star, Trash2, List, ChevronRight, Volume2, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, BookOpen, Copy, Check, AlertTriangle, Languages, Sparkles, X, Coffee, Sun, Moon, Star, Trash2, List, ChevronRight, Volume2, ChevronDown, ChevronUp, Settings, ChevronLeft } from 'lucide-react';
 import { PdfViewer } from './PdfViewer';
 import { EpubViewer } from './EpubViewer';
 import { TxtViewer } from './TxtViewer';
 import { MdViewer } from './MdViewer';
+import { TranslationTooltip } from './TranslationTooltip';
 import { useAuth } from '../context/AuthContext';
 
 
@@ -141,6 +142,136 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loadingContent, setLoadingContent] = useState<boolean>(true);
   const [contentError, setContentError] = useState<string>('');
+
+  // Read Through (Kindle Mode) States
+  const [readThroughActive, setReadThroughActive] = useState<boolean>(() => {
+    return localStorage.getItem('readthrough_rt_active') === 'true';
+  });
+  const [rtFontFamily, setRtFontFamily] = useState<string>(() => {
+    return localStorage.getItem('readthrough_rt_font_family') || 'serif';
+  });
+  const [rtFontSizeLevel, setRtFontSizeLevel] = useState<number>(() => {
+    const saved = localStorage.getItem('readthrough_rt_font_size_level');
+    return saved ? parseInt(saved, 10) : 4;
+  });
+  const [rtMargin, setRtMargin] = useState<'narrow' | 'normal' | 'wide'>(() => {
+    return (localStorage.getItem('readthrough_rt_margin') as any) || 'normal';
+  });
+  const [rtLineHeight, setRtLineHeight] = useState<string>(() => {
+    return localStorage.getItem('readthrough_rt_line_height') || '1.6';
+  });
+  const [showRtSettings, setShowRtSettings] = useState<boolean>(false);
+  const [showRtToc, setShowRtToc] = useState<boolean>(false);
+  const [hudVisible, setHudVisible] = useState<boolean>(true);
+  const [activeSelection, setActiveSelection] = useState<{ text: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('readthrough_rt_active', readThroughActive.toString());
+    if (readThroughActive) {
+      document.body.classList.add('rt-mode-active');
+    } else {
+      document.body.classList.remove('rt-mode-active');
+      setShowRtSettings(false);
+      setShowRtToc(false);
+      setActiveSelection(null);
+    }
+  }, [readThroughActive]);
+
+  useEffect(() => {
+    localStorage.setItem('readthrough_rt_font_family', rtFontFamily);
+  }, [rtFontFamily]);
+
+  useEffect(() => {
+    localStorage.setItem('readthrough_rt_font_size_level', rtFontSizeLevel.toString());
+  }, [rtFontSizeLevel]);
+
+  useEffect(() => {
+    localStorage.setItem('readthrough_rt_margin', rtMargin);
+  }, [rtMargin]);
+
+  useEffect(() => {
+    localStorage.setItem('readthrough_rt_line_height', rtLineHeight);
+  }, [rtLineHeight]);
+
+  const hudTimeoutRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!readThroughActive) return;
+
+    const resetHudTimeout = () => {
+      setHudVisible(true);
+      if (hudTimeoutRef.current) window.clearTimeout(hudTimeoutRef.current);
+      
+      if (!showRtSettings && !showRtToc) {
+        hudTimeoutRef.current = window.setTimeout(() => {
+          setHudVisible(false);
+        }, 3000);
+      }
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (e.clientY < 80 || e.clientY > window.innerHeight - 80) {
+        resetHudTimeout();
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    resetHudTimeout();
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      if (hudTimeoutRef.current) window.clearTimeout(hudTimeoutRef.current);
+    };
+  }, [readThroughActive, showRtSettings, showRtToc]);
+
+  // Kindle Mode: Click outside or Escape key to close floating popups (TOC, Settings, TranslationTooltip)
+  useEffect(() => {
+    if (!readThroughActive) return;
+
+    const handleOutsideEvent = () => {
+      setShowRtSettings(false);
+      setShowRtToc(false);
+      setActiveSelection(null);
+    };
+
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+
+      // Close settings panel if clicked outside settings panel and settings button
+      if (showRtSettings && !target.closest('.rt-settings-panel') && !target.closest('button[title="Text settings"]')) {
+        setShowRtSettings(false);
+      }
+
+      // Close TOC dropdown if clicked outside TOC panel and TOC button
+      if (showRtToc && !target.closest('.rt-toc-dropdown') && !target.closest('button[title="Table of Contents"]')) {
+        setShowRtToc(false);
+      }
+
+      // Close active selection tooltip if clicked outside selection tooltip
+      if (activeSelection && !target.closest('.translation-tooltip')) {
+        setActiveSelection(null);
+      }
+    };
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleOutsideEvent();
+      }
+    };
+
+    window.addEventListener('mousedown', handleGlobalClick);
+    window.addEventListener('keydown', handleEscape);
+    window.addEventListener('readthrough-click-outside', handleOutsideEvent);
+    window.addEventListener('readthrough-escape-key', handleOutsideEvent);
+
+    return () => {
+      window.removeEventListener('mousedown', handleGlobalClick);
+      window.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('readthrough-click-outside', handleOutsideEvent);
+      window.removeEventListener('readthrough-escape-key', handleOutsideEvent);
+    };
+  }, [readThroughActive, showRtSettings, showRtToc, activeSelection]);
 
   // Table of Contents and Navigation states
   const [outline, setOutline] = useState<any[]>([]);
@@ -452,6 +583,14 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         if (cachedResponse) {
           const blob = await cachedResponse.blob();
           if (!active) return;
+
+          const text = await blob.text();
+          console.log("[BookReaderDebug] Cached Book length:", text.length);
+          console.log("[BookReaderDebug] Contains WhatsApp:", text.toLowerCase().includes("whatsapp"));
+          console.log("[BookReaderDebug] Contains Netflix:", text.toLowerCase().includes("netflix"));
+          console.log("[BookReaderDebug] Contains Twitter:", text.toLowerCase().includes("twitter"));
+          console.log("[BookReaderDebug] End of book text:", text.substring(Math.max(0, text.length - 1000)));
+
           localBlobUrl = URL.createObjectURL(blob);
           setBlobUrl(localBlobUrl);
           setLoadingContent(false);
@@ -484,6 +623,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         // Clone the response to store it in cache and get the blob for current render
         const fileResClone = fileRes.clone();
         const blob = await fileRes.blob();
+
+        const text = await blob.text();
+        console.log("[BookReaderDebug] Fetched Book length:", text.length);
+        console.log("[BookReaderDebug] Contains WhatsApp:", text.toLowerCase().includes("whatsapp"));
+        console.log("[BookReaderDebug] Contains Netflix:", text.toLowerCase().includes("netflix"));
+        console.log("[BookReaderDebug] Contains Twitter:", text.toLowerCase().includes("twitter"));
+        console.log("[BookReaderDebug] End of book text:", text.substring(Math.max(0, text.length - 1000)));
         
         try {
           await cache.put(cacheKey, fileResClone);
@@ -814,8 +960,15 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     return selectedText;
   };
 
-  const handleSelection = useCallback(async (text: string) => {
+  const handleSelection = useCallback(async (text: string, x?: number, y?: number) => {
     if (!text.trim()) return;
+
+    if (readThroughActive) {
+      const posX = x !== undefined ? x : window.innerWidth / 2;
+      const posY = y !== undefined ? y : window.innerHeight / 2;
+      setActiveSelection({ text: text.trim(), x: posX, y: posY });
+      return;
+    }
 
     const contextSentence = getSentenceContext(text.trim());
     const id = Date.now();
@@ -861,7 +1014,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         prev.map(t => t.id === id ? { ...t, error: e.message, loading: false } : t)
       );
     }
-  }, []);
+  }, [readThroughActive, fetchWithAuth]);
 
   const fetchCardExplanation = async (entry: TranslationEntry) => {
     if (entry.explanation || entry.explainLoading) return;
@@ -1062,7 +1215,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   const contentUrl = blobUrl || '';
 
   return (
-    <div className="reader-shell">
+    <div className={`reader-shell ${readThroughActive ? 'rt-active' : ''}`}>
       {/* Top Toolbar */}
       <header className="reader-toolbar">
         <div className="reader-toolbar-left">
@@ -1101,6 +1254,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
             {theme === 'light' && <Moon size={15} />}
             {theme === 'dark' && <Coffee size={15} />}
             {theme === 'sepia' && <Sun size={15} />}
+          </button>
+          <button
+            className={`theme-btn ${readThroughActive ? 'active' : ''}`}
+            onClick={() => setReadThroughActive(!readThroughActive)}
+            title="Kindle Mode (Read Through)"
+          >
+            <BookOpen size={15} />
           </button>
           <button
             className={`sidebar-toggle-btn ${sidebarOpen ? 'active' : ''}`}
@@ -1171,6 +1331,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   onPageChange={handlePdfPageChange}
                   onSelection={handleSelection}
                   onOutlineLoaded={handleOutlineLoaded}
+                  readThroughActive={readThroughActive}
                 />
               )}
               {book.file_type === 'epub' && (
@@ -1182,6 +1343,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   onSelection={handleSelection}
                   theme={theme}
                   onOutlineLoaded={handleOutlineLoaded}
+                  readThroughActive={readThroughActive}
+                  rtSettings={{
+                    fontFamily: rtFontFamily,
+                    fontSizeLevel: rtFontSizeLevel,
+                    margin: rtMargin,
+                    lineHeight: rtLineHeight
+                  }}
                 />
               )}
               {book.file_type === 'md' && (
@@ -1193,6 +1361,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   onSelection={handleSelection}
                   onOutlineLoaded={handleOutlineLoaded}
                   theme={theme}
+                  readThroughActive={readThroughActive}
+                  rtSettings={{
+                    fontFamily: rtFontFamily,
+                    fontSizeLevel: rtFontSizeLevel,
+                    margin: rtMargin,
+                    lineHeight: rtLineHeight
+                  }}
                 />
               )}
               {book.file_type === 'txt' && (
@@ -1202,6 +1377,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   initialPage={currentPage}
                   onPageChange={handleTxtPageChange}
                   onSelection={handleSelection}
+                  readThroughActive={readThroughActive}
+                  rtSettings={{
+                    fontFamily: rtFontFamily,
+                    fontSizeLevel: rtFontSizeLevel,
+                    margin: rtMargin,
+                    lineHeight: rtLineHeight
+                  }}
                 />
               )}
             </>
@@ -1492,6 +1674,145 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           </div>
         </aside>
       </div>
+
+      {readThroughActive && (
+        <div className={`rt-hud ${hudVisible ? 'visible' : 'hidden'}`}>
+          <div className="rt-header">
+            <button className="rt-btn rt-back-btn" onClick={() => setReadThroughActive(false)} title="Exit Kindle Mode">
+              <ArrowLeft size={18} />
+              <span>Exit</span>
+            </button>
+            <div className="rt-book-title">{book.title}</div>
+            <div className="rt-actions">
+              <button className={`rt-btn ${showRtToc ? 'active' : ''}`} onClick={() => { setShowRtToc(!showRtToc); setShowRtSettings(false); }} title="Table of Contents">
+                <List size={18} />
+              </button>
+              <button className={`rt-btn ${showRtSettings ? 'active' : ''}`} onClick={() => { setShowRtSettings(!showRtSettings); setShowRtToc(false); }} title="Text settings">
+                <Settings size={18} />
+              </button>
+              <button className="rt-btn" onClick={onThemeChange} title="Change background theme">
+                {theme === 'light' && <Moon size={18} />}
+                {theme === 'dark' && <Coffee size={18} />}
+                {theme === 'sepia' && <Sun size={18} />}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kindle Mode Floating TOC Dropdown */}
+      {readThroughActive && showRtToc && (
+        <div className="rt-toc-dropdown">
+          <div className="rt-toc-header">
+            <h3>Table of Contents</h3>
+            <button onClick={() => setShowRtToc(false)}><X size={16} /></button>
+          </div>
+          <div className="rt-toc-body">
+            {outline.length === 0 ? (
+              <p className="rt-toc-empty">No table of contents available.</p>
+            ) : (
+              <div className="toc-list">
+                {renderOutlineItems(outline)}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Kindle Mode Settings Panel */}
+      {readThroughActive && showRtSettings && (
+        <div className="rt-settings-panel">
+          <div className="rt-settings-section">
+            <label>Font Family</label>
+            <div className="rt-settings-options font-options">
+              <button className={rtFontFamily === 'serif' ? 'active' : ''} onClick={() => setRtFontFamily('serif')}>Georgia</button>
+              <button className={rtFontFamily === 'sans-serif' ? 'active' : ''} onClick={() => setRtFontFamily('sans-serif')}>Sans</button>
+              <button className={rtFontFamily === 'monospace' ? 'active' : ''} onClick={() => setRtFontFamily('monospace')}>Mono</button>
+              <button className={rtFontFamily === 'dyslexic' ? 'active' : ''} onClick={() => setRtFontFamily('dyslexic')}>Dyslexic</button>
+            </div>
+          </div>
+
+          <div className="rt-settings-section">
+            <label>Font Size</label>
+            <div className="rt-settings-options font-size-options">
+              <button onClick={() => setRtFontSizeLevel(p => Math.max(1, p - 1))} disabled={rtFontSizeLevel <= 1}>A-</button>
+              <span className="rt-settings-value">Level {rtFontSizeLevel}</span>
+              <button onClick={() => setRtFontSizeLevel(p => Math.min(8, p + 1))} disabled={rtFontSizeLevel >= 8}>A+</button>
+            </div>
+          </div>
+
+          <div className="rt-settings-section">
+            <label>Margins</label>
+            <div className="rt-settings-options margin-options">
+              <button className={rtMargin === 'narrow' ? 'active' : ''} onClick={() => setRtMargin('narrow')}>Narrow</button>
+              <button className={rtMargin === 'normal' ? 'active' : ''} onClick={() => setRtMargin('normal')}>Normal</button>
+              <button className={rtMargin === 'wide' ? 'active' : ''} onClick={() => setRtMargin('wide')}>Wide</button>
+            </div>
+          </div>
+
+          <div className="rt-settings-section">
+            <label>Line Spacing</label>
+            <div className="rt-settings-options line-height-options">
+              <button className={rtLineHeight === '1.4' ? 'active' : ''} onClick={() => setRtLineHeight('1.4')}>1.4</button>
+              <button className={rtLineHeight === '1.6' ? 'active' : ''} onClick={() => setRtLineHeight('1.6')}>1.6</button>
+              <button className={rtLineHeight === '1.8' ? 'active' : ''} onClick={() => setRtLineHeight('1.8')}>1.8</button>
+              <button className={rtLineHeight === '2.0' ? 'active' : ''} onClick={() => setRtLineHeight('2.0')}>2.0</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kindle Mode Floating Footer (Progress) */}
+      {readThroughActive && (
+        <div className={`rt-footer ${hudVisible ? 'visible' : 'hidden'}`}>
+          <div className="rt-progress-bar-container">
+            <div 
+              className="rt-progress-bar" 
+              style={{ 
+                width: `${book.total_pages && currentPage ? (currentPage / book.total_pages) * 100 : 0}%` 
+              }} 
+              />
+          </div>
+          <div className="rt-footer-meta">
+            <span>{currentPage && book.total_pages ? `Page ${currentPage} of ${book.total_pages}` : book.file_type === 'epub' || book.file_type === 'md' ? 'Current Position' : ''}</span>
+            <span>{Math.round(book.total_pages && currentPage ? (currentPage / book.total_pages) * 100 : 0)}% read</span>
+          </div>
+        </div>
+      )}
+
+      {/* Page Turning Hover Buttons */}
+      {readThroughActive && (
+        <>
+          <button 
+            className="rt-nav-zone left" 
+            onClick={() => window.dispatchEvent(new CustomEvent('readthrough-prev-page'))}
+            title="Previous page (Left arrow)"
+          >
+            <ChevronLeft size={36} />
+          </button>
+          <button 
+            className="rt-nav-zone right" 
+            onClick={() => window.dispatchEvent(new CustomEvent('readthrough-next-page'))}
+            title="Next page (Right arrow)"
+          >
+            <ChevronRight size={36} />
+          </button>
+        </>
+      )}
+
+      {/* Selection Tooltip */}
+      {readThroughActive && activeSelection && (
+        <TranslationTooltip
+          text={activeSelection.text}
+          x={activeSelection.x}
+          y={activeSelection.y}
+          onClose={() => setActiveSelection(null)}
+          contextSentence={getSentenceContext(activeSelection.text)}
+          bookTitle={book.title}
+          bookAuthor={book.author}
+          pageNumber={currentPage}
+        />
+      )}
     </div>
   );
 };

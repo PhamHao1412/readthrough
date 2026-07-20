@@ -7,9 +7,16 @@ interface MdViewerProps {
   url: string;
   initialCfi: string;
   onProgressChange: (cfi: string) => void;
-  onSelection: (text: string) => void;
+  onSelection: (text: string, x?: number, y?: number) => void;
   onOutlineLoaded?: (outline: any[]) => void;
   theme: 'light' | 'dark' | 'sepia';
+  readThroughActive?: boolean;
+  rtSettings?: {
+    fontFamily: string;
+    fontSizeLevel: number;
+    margin: string;
+    lineHeight: string;
+  };
 }
 
 export interface MarkdownBlock {
@@ -275,41 +282,196 @@ export const parseMarkdownText = (text: string): { parsedBlocks: MarkdownBlock[]
   return { parsedBlocks, outline };
 };
 
+// Helper to escape HTML characters
+const escapeHtml = (str: string): string => {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+};
+
+// Highlight inline markdown tokens
+const highlightInlineMarkdown = (text: string): string => {
+  let escaped = escapeHtml(text);
+
+  // Use placeholders to avoid matching markers inside already replaced HTML elements
+  const placeholders: string[] = [];
+  const addPlaceholder = (html: string): string => {
+    const placeholder = `___MD_HIGHLIGHT_PLACEHOLDER_${placeholders.length}___`;
+    placeholders.push(html);
+    return placeholder;
+  };
+
+  // 1. Code Spans / Inline Code: `code`
+  escaped = escaped.replace(/(`.*?`)/g, (match) => {
+    return addPlaceholder(`<span class="md-syntax-inline-code">${match}</span>`);
+  });
+
+  // 2. Math Double Dollar: $$math$$
+  escaped = escaped.replace(/(\$\$.+?\$\$)/g, (match) => {
+    return addPlaceholder(`<span class="md-syntax-math-block">${match}</span>`);
+  });
+
+  // 3. Math Single Dollar: $math$
+  escaped = escaped.replace(/(\$[^\$\s](?:[^\$]*?[^\$\s])?\$)/g, (match) => {
+    return addPlaceholder(`<span class="md-syntax-math-inline">${match}</span>`);
+  });
+
+  // 4. Image Markdown: ![alt](url)
+  escaped = escaped.replace(/(!\[.*?\]\(.*?\))/g, (match) => {
+    const parts = match.match(/(!\[(.*?)\])\(((.*?))\)/);
+    if (parts) {
+      const alt = parts[2];
+      const url = parts[3];
+      return addPlaceholder(`<span class="md-syntax-img-marker">!</span><span class="md-syntax-link-text">[${alt}]</span><span class="md-syntax-link-url">(${url})</span>`);
+    }
+    return match;
+  });
+
+  // 5. Link Markdown: [text](url)
+  escaped = escaped.replace(/(\[.*?\]\(.*?\))/g, (match) => {
+    const parts = match.match(/(\[(.*?)\])\(((.*?))\)/);
+    if (parts) {
+      const label = parts[2];
+      const url = parts[3];
+      return addPlaceholder(`<span class="md-syntax-link-text">[${label}]</span><span class="md-syntax-link-url">(${url})</span>`);
+    }
+    return match;
+  });
+
+  // 6. Bold: **text**
+  escaped = escaped.replace(/(\*\*.*?\*\*)/g, (match) => {
+    return addPlaceholder(`<span class="md-syntax-bold">${match}</span>`);
+  });
+
+  // 7. Italic: *text* or _text_
+  escaped = escaped.replace(/(\*.*?\*)/g, (match) => {
+    return addPlaceholder(`<span class="md-syntax-italic">${match}</span>`);
+  });
+  escaped = escaped.replace(/(_.*?_)/g, (match) => {
+    return addPlaceholder(`<span class="md-syntax-italic">${match}</span>`);
+  });
+
+  // Re-substitute all placeholders
+  let prevResult;
+  do {
+    prevResult = escaped;
+    for (let i = 0; i < placeholders.length; i++) {
+      escaped = escaped.replace(`___MD_HIGHLIGHT_PLACEHOLDER_${i}___`, placeholders[i]);
+    }
+  } while (escaped !== prevResult);
+
+  return escaped;
+};
+
+// Simple Markdown syntax highlighter for the editor background overlay
+export const highlightMarkdownToHtml = (text: string): string => {
+  const lines = text.split('\n');
+  let inCodeBlock = false;
+
+  const highlightedLines = lines.map((line, idx) => {
+    const trimmed = line.trim();
+    let content = '';
+
+    // 1. Code Block Fence
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      content = `<span class="md-syntax-code-fence">${escapeHtml(line)}</span>`;
+    }
+    // 2. Code Block Content
+    else if (inCodeBlock) {
+      content = `<span class="md-syntax-code-block-content">${escapeHtml(line)}</span>`;
+    }
+    // 3. Headings
+    else if (line.match(/^(#{1,6}\s+)(.*)$/)) {
+      const headingMatch = line.match(/^(#{1,6}\s+)(.*)$/)!;
+      const hashes = headingMatch[1];
+      const contentText = headingMatch[2];
+      content = `<span class="md-syntax-header md-syntax-h${hashes.trim().length}"><span class="md-syntax-header-hashes">${escapeHtml(hashes)}</span>${highlightInlineMarkdown(contentText)}</span>`;
+    }
+    // 4. Blockquote
+    else if (trimmed.startsWith('>')) {
+      const match = line.match(/^(\s*>\s*)(.*)$/);
+      if (match) {
+        content = `<span class="md-syntax-blockquote-marker">${escapeHtml(match[1])}</span><span class="md-syntax-blockquote-content">${highlightInlineMarkdown(match[2])}</span>`;
+      } else {
+        content = highlightInlineMarkdown(line);
+      }
+    }
+    // 5. Horizontal Rule
+    else if (/^(?:-{3,}|\*{3,}|\_{3,})$/.test(trimmed)) {
+      content = `<span class="md-syntax-hr">${escapeHtml(line)}</span>`;
+    }
+    // 6. Lists
+    else if (line.match(/^(\s*)([-*+]|\d+\.)(\s+)(.*)$/)) {
+      const listMatch = line.match(/^(\s*)([-*+]|\d+\.)(\s+)(.*)$/)!;
+      const indent = listMatch[1];
+      const bullet = listMatch[2];
+      const space = listMatch[3];
+      const listContent = listMatch[4];
+      content = `${escapeHtml(indent)}<span class="md-syntax-list-bullet">${escapeHtml(bullet)}</span>${escapeHtml(space)}<span class="md-syntax-list-content">${highlightInlineMarkdown(listContent)}</span>`;
+    }
+    // 7. Regular Line with inline highlights
+    else {
+      content = highlightInlineMarkdown(line);
+    }
+
+    const displayLine = content === '' ? '&#8203;' : content;
+    return `<div class="md-editor-line" data-line="${idx}">${displayLine}</div>`;
+  });
+
+  return highlightedLines.join('');
+};
+
 interface Checkpoint {
   id: string;
   editorScroll: number;
   previewScroll: number;
 }
 
-// Simulates browser word-wrapping for monospace text inside a textarea
-const countWrappedLines = (text: string, maxChars: number): number => {
-  const cleanText = text.replace(/\t/g, '    ');
-  if (cleanText.length === 0) return 1;
-  if (maxChars <= 0) return 1;
+// Obsolete simulated line wrapping removed in favor of direct DOM line elements offset measuring
 
-  const words = cleanText.split(/(\s+)/);
-  let visualLines = 1;
-  let currentLineLength = 0;
+// Helper to find the top-most visible block in the preview pane
+const getTopVisibleBlock = (preview: HTMLDivElement, blocks: MarkdownBlock[]): MarkdownBlock | null => {
+  const previewRect = preview.getBoundingClientRect();
+  for (const block of blocks) {
+    const el = document.getElementById(block.id);
+    if (!el) continue;
+    const elRect = el.getBoundingClientRect();
+    if (elRect.bottom >= previewRect.top + 10) {
+      return block;
+    }
+  }
+  return null;
+};
 
-  for (const word of words) {
-    const len = word.length;
-    if (currentLineLength + len <= maxChars) {
-      currentLineLength += len;
-    } else {
-      if (len > maxChars) {
-        if (currentLineLength > 0) {
-          visualLines++;
-          currentLineLength = 0;
-        }
-        visualLines += Math.floor(len / maxChars);
-        currentLineLength = len % maxChars;
-      } else {
-        visualLines++;
-        currentLineLength = len;
+// Helper to find the top-most visible line in the editor (textarea)
+const getTopVisibleLine = (editor: HTMLTextAreaElement, highlightPre: HTMLPreElement | null): number => {
+  const lineElements = highlightPre?.querySelectorAll('.md-editor-line');
+  if (!lineElements || lineElements.length === 0) return 0;
+
+  const scrollTop = editor.scrollTop;
+
+  for (let i = 0; i < lineElements.length; i++) {
+    const el = lineElements[i] as HTMLElement;
+    const lineBottom = el.offsetTop + el.offsetHeight;
+    if (lineBottom >= scrollTop) {
+      return i;
+    }
+  }
+  return 0;
+};
+
+// Helper to map a line index back to a MarkdownBlock
+const getBlockAtLine = (lineIndex: number, blocks: MarkdownBlock[]): MarkdownBlock | null => {
+  for (const block of blocks) {
+    if (block.startLine !== undefined && block.endLine !== undefined) {
+      if (lineIndex >= block.startLine && lineIndex <= block.endLine) {
+        return block;
       }
     }
   }
-  return visualLines;
+  return null;
 };
 
 
@@ -380,7 +542,9 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   initialCfi,
   onProgressChange,
   onSelection,
-  onOutlineLoaded
+  onOutlineLoaded,
+  readThroughActive = false,
+  rtSettings,
 }) => {
   const { fetchWithAuth } = useAuth();
   
@@ -393,11 +557,13 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   const [viewMode, setViewMode] = useState<'editor' | 'split' | 'preview'>('preview');
   const [editContent, setEditContent] = useState<string>('');
   const [saving, setSaving] = useState<boolean>(false);
+  const [pendingScrollLine, setPendingScrollLine] = useState<number | null>(null);
+  const [pendingScrollBlockId, setPendingScrollBlockId] = useState<string | null>(null);
 
   // Settings states
   const [fontSize, setFontSize] = useState<number>(() => {
     const saved = localStorage.getItem(`readthrough_font_size_md_${bookId}`);
-    return saved ? Math.max(14, Math.min(32, parseInt(saved, 10))) : 18;
+    return saved ? Math.max(14, Math.min(32, parseInt(saved, 10))) : 16;
   });
   const [fontFamily, setFontFamily] = useState<'sans-serif' | 'serif'>(() => {
     const saved = localStorage.getItem(`readthrough_font_family_md_${bookId}`);
@@ -408,6 +574,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const highlightPreRef = useRef<HTMLPreElement>(null);
   const lastActiveHeadingRef = useRef<string>('');
   const ignoreScrollEventRef = useRef<boolean>(false);
   const checkpointsRef = useRef<Checkpoint[] | null>(null);
@@ -425,6 +592,79 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Perform scroll synchronization for Editor on view mode transition
+  useEffect(() => {
+    if (pendingScrollLine !== null && (viewMode === 'editor' || viewMode === 'split')) {
+      const editor = editorRef.current;
+      if (editor) {
+        const timer = setTimeout(() => {
+          const style = window.getComputedStyle(editor);
+          const paddingTop = parseFloat(style.paddingTop) || 0;
+          const lineElements = highlightPreRef.current?.querySelectorAll('.md-editor-line');
+          
+          if (lineElements && lineElements[pendingScrollLine]) {
+            const lineEl = lineElements[pendingScrollLine] as HTMLElement;
+            editor.scrollTop = lineEl.offsetTop - paddingTop;
+          }
+          setPendingScrollLine(null);
+        }, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [viewMode, pendingScrollLine]);
+
+  // Perform scroll synchronization for Preview on view mode transition
+  useEffect(() => {
+    if (pendingScrollBlockId !== null && (viewMode === 'preview' || viewMode === 'split')) {
+      const preview = scrollContainerRef.current;
+      if (preview) {
+        const timer = setTimeout(() => {
+          const targetElement = document.getElementById(pendingScrollBlockId);
+          if (targetElement) {
+            ignoreScrollEventRef.current = true;
+            const containerRect = preview.getBoundingClientRect();
+            const targetRect = targetElement.getBoundingClientRect();
+            const targetOffsetTop = targetRect.top - containerRect.top + preview.scrollTop;
+            
+            preview.scrollTop = Math.max(0, targetOffsetTop - 20);
+            
+            setTimeout(() => {
+              ignoreScrollEventRef.current = false;
+            }, 200);
+          }
+          setPendingScrollBlockId(null);
+        }, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [viewMode, pendingScrollBlockId]);
+
+  // Handle view mode changes and synchronize scroll positions
+  const handleViewModeChange = (newMode: 'editor' | 'split' | 'preview') => {
+    // 1. Preview -> Editor/Split: Save preview top block to scroll editor to it
+    if ((viewMode === 'preview' || viewMode === 'split') && (newMode === 'editor' || newMode === 'split')) {
+      const preview = scrollContainerRef.current;
+      if (preview) {
+        const topBlock = getTopVisibleBlock(preview, blocks);
+        if (topBlock && topBlock.startLine !== undefined) {
+          setPendingScrollLine(topBlock.startLine);
+        }
+      }
+    }
+    // 2. Editor -> Preview/Split: Save editor top line to scroll preview to it
+    else if (viewMode === 'editor' && (newMode === 'preview' || newMode === 'split')) {
+      const editor = editorRef.current;
+      if (editor) {
+        const topLine = getTopVisibleLine(editor, highlightPreRef.current);
+        const block = getBlockAtLine(topLine, blocks);
+        if (block) {
+          setPendingScrollBlockId(block.id);
+        }
+      }
+    }
+    setViewMode(newMode);
+  };
 
 
   // Fetch document content
@@ -536,20 +776,50 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
     }
   }, [blocks, viewMode, onProgressChange]);
 
-  // Selection handler
   const handleMouseUp = (e: React.MouseEvent) => {
     e.stopPropagation();
+    // Skip – double-click will be handled by handleDblClick
+    if (e.detail >= 2) return;
     const sel = window.getSelection();
     if (!sel) return;
     const text = sel.toString().trim();
     if (text.length > 0) {
-      onSelection(text);
+      try {
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.bottom;
+        onSelection(text, x, y);
+      } catch (err) {
+        onSelection(text);
+      }
     }
   };
 
   const handleDblClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Use setTimeout to let the browser finalize its native word selection first
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+
+      // Strip leading/trailing punctuation from the selected text so that
+      // double-clicking "linearizable," returns "linearizable" not "linearizable,"
+      const raw = sel.toString();
+      const cleaned = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim();
+      if (!cleaned) return;
+
+      try {
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.bottom;
+        onSelection(cleaned, x, y);
+      } catch (err) {
+        onSelection(cleaned);
+      }
+    }, 10);
   };
 
   // Keyboard zoom control (similar to TxtViewer)
@@ -623,8 +893,13 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
 
   // Scroll synchronization handler (Editor to Preview)
   const handleEditorScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
-    if (viewMode !== 'split') return;
     const editor = e.currentTarget;
+    if (highlightPreRef.current) {
+      highlightPreRef.current.scrollTop = editor.scrollTop;
+      highlightPreRef.current.scrollLeft = editor.scrollLeft;
+    }
+
+    if (viewMode !== 'split') return;
     const preview = scrollContainerRef.current;
     if (!editor || !preview || blocks.length === 0) return;
 
@@ -635,37 +910,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
 
     // Retrieve or calculate checkpoints
     if (!checkpointsRef.current) {
-      const style = window.getComputedStyle(editor);
-      const paddingLeft = parseFloat(style.paddingLeft) || 0;
-      const paddingRight = parseFloat(style.paddingRight) || 0;
-      const paddingTop = parseFloat(style.paddingTop) || 0;
-      const lineHeight = parseFloat(style.lineHeight) || 25.6;
-
-      const textareaWidth = editor.clientWidth - paddingLeft - paddingRight;
-
-      // Measure character width for JetBrains Mono monospace font
-      const span = document.createElement('span');
-      span.style.fontFamily = style.fontFamily;
-      span.style.fontSize = style.fontSize;
-      span.style.visibility = 'hidden';
-      span.style.position = 'absolute';
-      span.style.whiteSpace = 'pre';
-      span.textContent = 'a'.repeat(100);
-      document.body.appendChild(span);
-      const charWidth = span.getBoundingClientRect().width / 100;
-      document.body.removeChild(span);
-
-      const maxChars = charWidth > 0 ? Math.floor(textareaWidth / charWidth) : 80;
-
-      const rawLines = editContent.split('\n');
-      const visualLineOffsets: number[] = [];
-      let cumulative = 0;
-      
-      for (const line of rawLines) {
-        visualLineOffsets.push(cumulative);
-        cumulative += countWrappedLines(line, maxChars);
-      }
-
+      const lineElements = highlightPreRef.current?.querySelectorAll('.md-editor-line');
       const previewRect = preview.getBoundingClientRect();
       const list: Checkpoint[] = [];
       
@@ -681,7 +926,12 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
 
         const elRect = el.getBoundingClientRect();
         const previewScroll = elRect.top - previewRect.top + preview.scrollTop - 20;
-        const editorScroll = paddingTop + visualLineOffsets[block.startLine] * lineHeight;
+
+        // Retrieve the actual visual line element from the highlight pre
+        const lineEl = lineElements?.[block.startLine] as HTMLElement | undefined;
+        if (!lineEl) continue;
+        
+        const editorScroll = lineEl.offsetTop;
 
         list.push({
           id: block.id,
@@ -919,6 +1169,47 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
     });
   };
 
+  // Handle next/prev page scroll events for MD preview pane
+  useEffect(() => {
+    const handleNext = () => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollBy({
+          top: scrollContainerRef.current.clientHeight - 40,
+          behavior: 'smooth'
+        });
+      }
+    };
+    const handlePrev = () => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollBy({
+          top: -(scrollContainerRef.current.clientHeight - 40),
+          behavior: 'smooth'
+        });
+      }
+    };
+
+    window.addEventListener('readthrough-next-page', handleNext);
+    window.addEventListener('readthrough-prev-page', handlePrev);
+    return () => {
+      window.removeEventListener('readthrough-next-page', handleNext);
+      window.removeEventListener('readthrough-prev-page', handlePrev);
+    };
+  }, []);
+
+  const mdStyles = readThroughActive && rtSettings ? {
+    fontFamily: rtSettings.fontFamily === 'serif' ? "'Lora', Georgia, serif" :
+                rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
+                rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
+                rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" : undefined,
+    fontSize: `${14 + (rtSettings.fontSizeLevel - 1) * 2}px`,
+    lineHeight: rtSettings.lineHeight,
+    paddingLeft: rtSettings.margin === 'narrow' ? '4%' : rtSettings.margin === 'normal' ? '12%' : '20%',
+    paddingRight: rtSettings.margin === 'narrow' ? '4%' : rtSettings.margin === 'normal' ? '12%' : '20%',
+    maxWidth: 'none',
+  } : {
+    fontSize: `${fontSize}px`
+  };
+
   if (loading) {
     return (
       <div className="loading-state">
@@ -939,8 +1230,9 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   return (
     <div className="md-viewer">
       {/* Markdown Reader Toolbar Controls */}
-      <div className="md-controls">
-        <div className="md-controls-group">
+      {!readThroughActive && (
+        <div className="md-controls">
+          <div className="md-controls-group">
           {editContent !== rawContent && (
             <button
               className="ctrl-btn active"
@@ -972,10 +1264,10 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
           )}
         </div>
 
-        {/* Font styling configuration (only visible when preview pane is active) */}
-        {viewMode !== 'editor' && (
-          <div className="md-controls-group">
-            {/* Font Family selector */}
+        {/* Font styling configuration */}
+        <div className="md-controls-group">
+          {/* Font Family selector (only visible when preview pane is active) */}
+          {viewMode !== 'editor' && (
             <button
               className="ctrl-btn"
               onClick={() => fontFamily === 'sans-serif' ? setFontFamily('serif') : setFontFamily('sans-serif')}
@@ -984,34 +1276,34 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
             >
               {fontFamily === 'sans-serif' ? 'Serif font' : 'Sans font'}
             </button>
+          )}
 
-            {/* Font Zoom controls */}
-            <button
-              className="ctrl-btn"
-              onClick={() => setFontSize(p => Math.max(14, p - 2))}
-              title="Decrease font size"
-            >
-              <Type size={13} />
-            </button>
-            <span className="ctrl-label" style={{ fontSize: '0.75rem', minWidth: '70px', textAlign: 'center' }}>
-              {fontSize}px
-            </span>
-            <button
-              className="ctrl-btn"
-              onClick={() => setFontSize(p => Math.min(32, p + 2))}
-              title="Increase font size"
-            >
-              <Type size={18} />
-            </button>
-          </div>
-        )}
+          {/* Font Zoom controls */}
+          <button
+            className="ctrl-btn"
+            onClick={() => setFontSize(p => Math.max(14, p - 2))}
+            title="Decrease font size"
+          >
+            <Type size={13} />
+          </button>
+          <span className="ctrl-label" style={{ fontSize: '0.75rem', minWidth: '70px', textAlign: 'center' }}>
+            {fontSize}px
+          </span>
+          <button
+            className="ctrl-btn"
+            onClick={() => setFontSize(p => Math.min(32, p + 2))}
+            title="Increase font size"
+          >
+            <Type size={18} />
+          </button>
+        </div>
 
         {/* View Mode Layout toggles */}
         <div className="md-controls-group md-mode-toggles">
           {/* Button 1: Editor only */}
           <button
             className={`md-mode-btn md-mode-editor ${viewMode === 'editor' ? 'active' : ''}`}
-            onClick={() => setViewMode('editor')}
+            onClick={() => handleViewModeChange('editor')}
             title="Show Editor Only"
           >
             <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
@@ -1023,7 +1315,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
           {/* Button 2: Editor and Preview (Split) */}
           <button
             className={`md-mode-btn md-mode-split ${viewMode === 'split' ? 'active' : ''}`}
-            onClick={() => setViewMode('split')}
+            onClick={() => handleViewModeChange('split')}
             title="Show Editor and Preview (Split)"
           >
             <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
@@ -1037,7 +1329,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
           {/* Button 3: Preview only */}
           <button
             className={`md-mode-btn md-mode-preview ${viewMode === 'preview' ? 'active' : ''}`}
-            onClick={() => setViewMode('preview')}
+            onClick={() => handleViewModeChange('preview')}
             title="Show Preview Only"
           >
             <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
@@ -1048,19 +1340,30 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
           </button>
         </div>
       </div>
+    )}
 
       {/* Body content workspace */}
       <div className="md-viewer-workspace">
         {(viewMode === 'editor' || viewMode === 'split') && (
           <div className={`md-editor-pane ${viewMode === 'split' ? 'split' : ''}`}>
-            <textarea
-              ref={editorRef}
-              className="md-editor-textarea"
-              value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
-              onScroll={handleEditorScroll}
-              placeholder="Write your markdown here..."
-            />
+            <div className="md-editor-container">
+              <pre
+                ref={highlightPreRef}
+                className="md-editor-highlight"
+                aria-hidden="true"
+                style={{ fontSize: `${Math.max(12, fontSize - 4)}px` }}
+                dangerouslySetInnerHTML={{ __html: highlightMarkdownToHtml(editContent) }}
+              />
+              <textarea
+                ref={editorRef}
+                className="md-editor-textarea"
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                onScroll={handleEditorScroll}
+                placeholder="Write your markdown here..."
+                style={{ fontSize: `${Math.max(12, fontSize - 4)}px` }}
+              />
+            </div>
           </div>
         )}
 
@@ -1073,8 +1376,8 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
             onDoubleClick={handleDblClick}
           >
             <div
-              className={`md-content font-${fontFamily}`}
-              style={{ fontSize: `${fontSize}px` }}
+              className={`md-content font-${readThroughActive && rtSettings ? rtSettings.fontFamily : fontFamily}`}
+              style={mdStyles}
             >
               {renderMarkdownBlocks()}
             </div>
