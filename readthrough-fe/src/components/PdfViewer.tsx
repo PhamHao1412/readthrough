@@ -43,10 +43,47 @@ interface HighlightBox {
 }
 
 /**
- * Extract the word surrounding `charIndex` inside `str`,
- * and return { word, wordStart, wordEnd } so the caller can
- * compute the word's bounding box within the text item.
+ * Trim leading and trailing punctuation/non-word characters from a DOM Range.
  */
+const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string } => {
+  const wordCharRegex = /^[\p{L}\p{N}_']$/u;
+  const cloned = range.cloneRange();
+
+  // 1. Trim trailing non-word characters
+  while (!cloned.collapsed) {
+    const endContainer = cloned.endContainer;
+    const endOffset = cloned.endOffset;
+    if (endContainer.nodeType === Node.TEXT_NODE && endOffset > 0) {
+      const text = endContainer.textContent || '';
+      const char = text[endOffset - 1];
+      if (char && !wordCharRegex.test(char)) {
+        cloned.setEnd(endContainer, endOffset - 1);
+        continue;
+      }
+    }
+    break;
+  }
+
+  // 2. Trim leading non-word characters
+  while (!cloned.collapsed) {
+    const startContainer = cloned.startContainer;
+    const startOffset = cloned.startOffset;
+    if (startContainer.nodeType === Node.TEXT_NODE) {
+      const text = startContainer.textContent || '';
+      if (startOffset < text.length) {
+        const char = text[startOffset];
+        if (char && !wordCharRegex.test(char)) {
+          cloned.setStart(startContainer, startOffset + 1);
+          continue;
+        }
+      }
+    }
+    break;
+  }
+
+  const word = cloned.toString().trim();
+  return { cleanedRange: cloned, word };
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -420,118 +457,87 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
     const clickX = e.clientX;
     const clickY = e.clientY;
 
-    // Use setTimeout of 50ms to ensure the browser's native selection is completed and finalized
+    // Small delay to let browser's native dblclick selection complete and finalize
     setTimeout(() => {
       const textLayer = textLayerRef.current;
       const container = containerRef.current;
       if (!textLayer || !container) return;
 
-      // ── Step 1: Find the exact text node + character offset at the click point ──
-      // caretRangeFromPoint gives us the exact character position under the cursor,
-      // bypassing browser's double-click selection which may include punctuation.
-      const caretRange = (document as any).caretRangeFromPoint?.(clickX, clickY)
-        ?? (document as any).caretPositionFromPoint?.(clickX, clickY);
-      if (!caretRange) return;
+      let targetRange: Range | null = null;
+      let word = '';
 
-      let clickNode: Text | null = null;
-      let clickOffset = 0;
-
-      if (caretRange.startContainer?.nodeType === Node.TEXT_NODE) {
-        // Standard Range from caretRangeFromPoint
-        clickNode = caretRange.startContainer as Text;
-        clickOffset = caretRange.startOffset;
-      } else if (caretRange.offsetNode?.nodeType === Node.TEXT_NODE) {
-        // CaretPosition from caretPositionFromPoint (Firefox)
-        clickNode = caretRange.offsetNode as Text;
-        clickOffset = caretRange.offset;
-      }
-
-      if (!clickNode || !textLayer.contains(clickNode)) return;
-
-      // ── Step 2: Gather all text nodes in the text layer (in reading order) ──
-      const wordCharRegex = /^[\p{L}\p{N}_']$/u;
-      const walk = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT, null);
-      const allNodes: Text[] = [];
-      let n: Node | null;
-      while ((n = walk.nextNode())) {
-        if ((n as Text).textContent?.trim()) allNodes.push(n as Text);
-      }
-
-      const nodeIdx = allNodes.indexOf(clickNode);
-      if (nodeIdx === -1) return;
-
-      // ── Step 3: Expand word start (backward, potentially across sibling spans) ──
-      let wordStartNode: Text = clickNode;
-      let wordStartOffset: number = clickOffset;
-
-      // Walk backward in current node
-      while (wordStartOffset > 0 && wordCharRegex.test(clickNode.textContent![wordStartOffset - 1])) {
-        wordStartOffset--;
-      }
-      // If we reached the beginning of the node, try previous nodes
-      if (wordStartOffset === 0) {
-        for (let i = nodeIdx - 1; i >= 0; i--) {
-          const prevNode = allNodes[i];
-          const prevText = prevNode.textContent || '';
-          let off = prevText.length;
-          while (off > 0 && wordCharRegex.test(prevText[off - 1])) off--;
-          if (off < prevText.length) {
-            wordStartNode = prevNode;
-            wordStartOffset = off;
-            if (off > 0) break; // stopped inside node
-            // off === 0: entire node is word chars, keep looking back
-          } else {
-            break; // no word chars at end of prev node
+      // ── Strategy 1: Browser Native Selection (handles kerning, visual layout & word boundaries perfectly) ──
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+        const nativeRange = sel.getRangeAt(0);
+        if (textLayer.contains(nativeRange.startContainer)) {
+          const trimmed = trimRangePunctuation(nativeRange);
+          if (trimmed.word) {
+            targetRange = trimmed.cleanedRange;
+            word = trimmed.word;
           }
         }
       }
 
-      // ── Step 4: Expand word end (forward, potentially across sibling spans) ──
-      let wordEndNode: Text = clickNode;
-      let wordEndOffset: number = clickOffset;
+      // ── Strategy 2: Fallback caretRangeFromPoint within clickNode only ──
+      if (!targetRange || !word) {
+        const caretRange = (document as any).caretRangeFromPoint?.(clickX, clickY)
+          ?? (document as any).caretPositionFromPoint?.(clickX, clickY);
 
-      // Walk forward in current node
-      const clickText = clickNode.textContent || '';
-      while (wordEndOffset < clickText.length && wordCharRegex.test(clickText[wordEndOffset])) {
-        wordEndOffset++;
-      }
-      // If we reached the end of the node, try next nodes
-      if (wordEndOffset === clickText.length) {
-        for (let i = nodeIdx + 1; i < allNodes.length; i++) {
-          const nextNode = allNodes[i];
-          const nextText = nextNode.textContent || '';
-          let off = 0;
-          while (off < nextText.length && wordCharRegex.test(nextText[off])) off++;
-          if (off > 0) {
-            wordEndNode = nextNode;
-            wordEndOffset = off;
-            if (off < nextText.length) break; // stopped inside node
-            // off === nextText.length: entire node is word chars, keep looking forward
-          } else {
-            break; // no word chars at start of next node
+        if (caretRange) {
+          let clickNode: Text | null = null;
+          let clickOffset = 0;
+
+          if (caretRange.startContainer?.nodeType === Node.TEXT_NODE) {
+            clickNode = caretRange.startContainer as Text;
+            clickOffset = caretRange.startOffset;
+          } else if (caretRange.offsetNode?.nodeType === Node.TEXT_NODE) {
+            clickNode = caretRange.offsetNode as Text;
+            clickOffset = caretRange.offset;
+          }
+
+          if (clickNode && textLayer.contains(clickNode)) {
+            const clickText = clickNode.textContent || '';
+            const wordCharRegex = /^[\p{L}\p{N}_']$/u;
+
+            let offset = clickOffset;
+            if (offset > 0 && (offset >= clickText.length || !wordCharRegex.test(clickText[offset]))) {
+              if (wordCharRegex.test(clickText[offset - 1])) {
+                offset = offset - 1;
+              }
+            }
+
+            let start = offset;
+            while (start > 0 && wordCharRegex.test(clickText[start - 1])) start--;
+
+            let end = offset;
+            while (end < clickText.length && wordCharRegex.test(clickText[end])) end++;
+
+            const fallbackRange = document.createRange();
+            fallbackRange.setStart(clickNode, start);
+            fallbackRange.setEnd(clickNode, end);
+
+            const w = fallbackRange.toString().trim();
+            if (w) {
+              targetRange = fallbackRange;
+              word = w;
+            }
           }
         }
       }
 
-      // ── Step 5: Build the clean word range ──
-      const wordRange = document.createRange();
-      wordRange.setStart(wordStartNode, wordStartOffset);
-      wordRange.setEnd(wordEndNode, wordEndOffset);
-
-      const word = wordRange.toString().trim();
-      if (!word) return;
+      if (!targetRange || !word) return;
 
       console.log('[ReadThrough PDF] Word from dblclick:', word);
 
-      // Update visual selection to match the exact word
-      const sel = window.getSelection();
+      // Update visual selection to match targetRange
       if (sel) {
         sel.removeAllRanges();
-        sel.addRange(wordRange);
+        sel.addRange(targetRange);
       }
 
-      // ── Step 6: Compute highlight box from the clean word range rects ──
-      const rects = wordRange.getClientRects();
+      // ── Compute highlight box from targetRange rects ──
+      const rects = targetRange.getClientRects();
       if (rects.length === 0) return;
 
       const containerRect = container.getBoundingClientRect();
@@ -553,7 +559,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
 
       showHighlight(box);
       fireWord(word, minLeft + (maxRight - minLeft) / 2, maxBottom);
-    }, 50);
+    }, 20);
   }, [fireWord, showHighlight]);
 
 

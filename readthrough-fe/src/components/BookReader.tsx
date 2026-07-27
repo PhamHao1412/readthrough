@@ -91,7 +91,13 @@ const renderMarkdown = (md: string) => {
 };
 
 const renderInlineMarkdown = (inlineText: string) => {
-  const parts = inlineText.split(/(\*\*.*?\*\*)/g);
+  let textToParse = inlineText;
+  const boldMatches = textToParse.match(/\*\*/g);
+  if (boldMatches && boldMatches.length % 2 !== 0) {
+    textToParse += '**';
+  }
+
+  const parts = textToParse.split(/(\*\*.*?\*\*)/g);
   return parts.map((part, idx) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={idx}>{part.slice(2, -2)}</strong>;
@@ -108,14 +114,31 @@ interface AutoScrollContainerProps {
 
 const AutoScrollContainer: React.FC<AutoScrollContainerProps> = ({ content, renderMarkdown, isCached }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef<boolean>(false);
+
+  const handleScroll = () => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    const threshold = 50;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+    userScrolledUpRef.current = !isNearBottom;
+  };
 
   useEffect(() => {
-    if (containerRef.current) {
-      if (isCached) {
-        containerRef.current.scrollTop = 0;
-      } else {
-        containerRef.current.scrollTop = containerRef.current.scrollHeight;
-      }
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+
+    if (isCached) {
+      el.scrollTop = 0;
+      userScrolledUpRef.current = false;
+      return;
+    }
+
+    if (!userScrolledUpRef.current) {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: 'smooth'
+      });
     }
   }, [content, isCached]);
 
@@ -123,7 +146,8 @@ const AutoScrollContainer: React.FC<AutoScrollContainerProps> = ({ content, rend
     <div
       ref={containerRef}
       className="explain-container"
-      style={{ maxHeight: '200px', overflowY: 'auto' }}
+      onScroll={handleScroll}
+      style={{ maxHeight: '220px', overflowY: 'auto' }}
     >
       {content ? renderMarkdown(content) : "No explanation available."}
     </div>
@@ -1060,6 +1084,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       const decoder = new TextDecoder('utf-8');
       let accumulatedText = '';
       let buffer = '';
+      let lastUpdate = 0;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -1069,6 +1094,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
+        let hasNewContent = false;
         for (const line of lines) {
           const trimmed = line.trim();
           if (trimmed.startsWith('data:')) {
@@ -1077,28 +1103,18 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
               const parsed = JSON.parse(dataStr);
               if (parsed.content) {
                 accumulatedText += parsed.content;
-                const hasCachedPrefix = accumulatedText.startsWith('[CACHED]');
-                setTranslations(prev =>
-                  prev.map(t => t.id === entry.id ? {
-                    ...t,
-                    explanation: hasCachedPrefix ? accumulatedText.slice(8) : accumulatedText,
-                    isCached: hasCachedPrefix
-                  } : t)
-                );
+                hasNewContent = true;
               }
             } catch (e) {
               console.warn('Failed to parse SSE JSON chunk:', e, dataStr);
             }
           }
         }
-      }
 
-      if (buffer.trim().startsWith('data:')) {
-        const dataStr = buffer.trim().slice(5).trim();
-        try {
-          const parsed = JSON.parse(dataStr);
-          if (parsed.content) {
-            accumulatedText += parsed.content;
+        if (hasNewContent) {
+          const now = Date.now();
+          if (now - lastUpdate >= 35) {
+            lastUpdate = now;
             const hasCachedPrefix = accumulatedText.startsWith('[CACHED]');
             setTranslations(prev =>
               prev.map(t => t.id === entry.id ? {
@@ -1108,9 +1124,18 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
               } : t)
             );
           }
-        } catch (e) {
-          console.warn('Failed to parse SSE JSON chunk:', e, dataStr);
         }
+      }
+
+      if (accumulatedText) {
+        const hasCachedPrefix = accumulatedText.startsWith('[CACHED]');
+        setTranslations(prev =>
+          prev.map(t => t.id === entry.id ? {
+            ...t,
+            explanation: hasCachedPrefix ? accumulatedText.slice(8) : accumulatedText,
+            isCached: hasCachedPrefix
+          } : t)
+        );
       }
     } catch (e: any) {
       setTranslations(prev =>

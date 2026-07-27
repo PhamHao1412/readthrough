@@ -19,6 +19,46 @@ interface EpubViewerProps {
   };
 }
 
+const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string } => {
+  const wordCharRegex = /^[\p{L}\p{N}_']$/u;
+  const cloned = range.cloneRange();
+
+  // 1. Trim trailing non-word characters
+  while (!cloned.collapsed) {
+    const endContainer = cloned.endContainer;
+    const endOffset = cloned.endOffset;
+    if (endContainer.nodeType === Node.TEXT_NODE && endOffset > 0) {
+      const text = endContainer.textContent || '';
+      const char = text[endOffset - 1];
+      if (char && !wordCharRegex.test(char)) {
+        cloned.setEnd(endContainer, endOffset - 1);
+        continue;
+      }
+    }
+    break;
+  }
+
+  // 2. Trim leading non-word characters
+  while (!cloned.collapsed) {
+    const startContainer = cloned.startContainer;
+    const startOffset = cloned.startOffset;
+    if (startContainer.nodeType === Node.TEXT_NODE) {
+      const text = startContainer.textContent || '';
+      if (startOffset < text.length) {
+        const char = text[startOffset];
+        if (char && !wordCharRegex.test(char)) {
+          cloned.setStart(startContainer, startOffset + 1);
+          continue;
+        }
+      }
+    }
+    break;
+  }
+
+  const word = cloned.toString().trim();
+  return { cleanedRange: cloned, word };
+};
+
 export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
   bookId,
   url,
@@ -111,6 +151,92 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
           doc.addEventListener('dblclick', (e: MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
+
+            const clickX = e.clientX;
+            const clickY = e.clientY;
+
+            setTimeout(() => {
+              const win = doc.defaultView || contents.window;
+              let targetRange: Range | null = null;
+              let word = '';
+
+              const sel = win?.getSelection();
+              if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+                const nativeRange = sel.getRangeAt(0);
+                const trimmed = trimRangePunctuation(nativeRange);
+                if (trimmed.word) {
+                  targetRange = trimmed.cleanedRange;
+                  word = trimmed.word;
+                }
+              }
+
+              if (!targetRange || !word) {
+                const caretRange = (doc as any).caretRangeFromPoint?.(clickX, clickY)
+                  ?? (doc as any).caretPositionFromPoint?.(clickX, clickY);
+
+                if (caretRange) {
+                  let clickNode: Text | null = null;
+                  let clickOffset = 0;
+
+                  if (caretRange.startContainer?.nodeType === Node.TEXT_NODE) {
+                    clickNode = caretRange.startContainer as Text;
+                    clickOffset = caretRange.startOffset;
+                  } else if (caretRange.offsetNode?.nodeType === Node.TEXT_NODE) {
+                    clickNode = caretRange.offsetNode as Text;
+                    clickOffset = caretRange.offset;
+                  }
+
+                  if (clickNode) {
+                    const text = clickNode.textContent || '';
+                    const wordCharRegex = /^[\p{L}\p{N}_']$/u;
+
+                    let offset = clickOffset;
+                    if (offset > 0 && (offset >= text.length || !wordCharRegex.test(text[offset]))) {
+                      if (wordCharRegex.test(text[offset - 1])) {
+                        offset = offset - 1;
+                      }
+                    }
+
+                    let start = offset;
+                    while (start > 0 && wordCharRegex.test(text[start - 1])) start--;
+
+                    let end = offset;
+                    while (end < text.length && wordCharRegex.test(text[end])) end++;
+
+                    const fallbackRange = doc.createRange();
+                    fallbackRange.setStart(clickNode, start);
+                    fallbackRange.setEnd(clickNode, end);
+
+                    const w = fallbackRange.toString().trim();
+                    if (w) {
+                      targetRange = fallbackRange;
+                      word = w;
+                    }
+                  }
+                }
+              }
+
+              if (targetRange && word) {
+                if (sel) {
+                  sel.removeAllRanges();
+                  sel.addRange(targetRange);
+                }
+                try {
+                  const rect = targetRange.getBoundingClientRect();
+                  const iframe = containerRef.current?.querySelector('iframe');
+                  if (iframe) {
+                    const iframeRect = iframe.getBoundingClientRect();
+                    const x = rect.left + rect.width / 2 + iframeRect.left;
+                    const y = rect.bottom + iframeRect.top;
+                    onSelection(word, x, y);
+                  } else {
+                    onSelection(word);
+                  }
+                } catch (err) {
+                  onSelection(word);
+                }
+              }
+            }, 20);
           }, true);
           doc.addEventListener('mousedown', () => {
             if (readThroughActive) {

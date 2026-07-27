@@ -18,6 +18,46 @@ interface TxtViewerProps {
 
 const CHARS_PER_PAGE = 2500;
 
+const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string } => {
+  const wordCharRegex = /^[\p{L}\p{N}_']$/u;
+  const cloned = range.cloneRange();
+
+  // 1. Trim trailing non-word characters
+  while (!cloned.collapsed) {
+    const endContainer = cloned.endContainer;
+    const endOffset = cloned.endOffset;
+    if (endContainer.nodeType === Node.TEXT_NODE && endOffset > 0) {
+      const text = endContainer.textContent || '';
+      const char = text[endOffset - 1];
+      if (char && !wordCharRegex.test(char)) {
+        cloned.setEnd(endContainer, endOffset - 1);
+        continue;
+      }
+    }
+    break;
+  }
+
+  // 2. Trim leading non-word characters
+  while (!cloned.collapsed) {
+    const startContainer = cloned.startContainer;
+    const startOffset = cloned.startOffset;
+    if (startContainer.nodeType === Node.TEXT_NODE) {
+      const text = startContainer.textContent || '';
+      if (startOffset < text.length) {
+        const char = text[startOffset];
+        if (char && !wordCharRegex.test(char)) {
+          cloned.setStart(startContainer, startOffset + 1);
+          continue;
+        }
+      }
+    }
+    break;
+  }
+
+  const word = cloned.toString().trim();
+  return { cleanedRange: cloned, word };
+};
+
 export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({
   bookId,
   url,
@@ -170,26 +210,85 @@ export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({
   const handleDblClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation(); // Stop event from reaching browser extensions
-    // Use setTimeout to let the browser finalize its native word selection first
+
+    const clickX = e.clientX;
+    const clickY = e.clientY;
+
     setTimeout(() => {
+      let targetRange: Range | null = null;
+      let word = '';
+
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
-
-      // Strip leading/trailing punctuation so double-clicking "word," returns "word"
-      const raw = sel.toString();
-      const cleaned = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim();
-      if (!cleaned) return;
-
-      try {
-        const range = sel.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        const x = rect.left + rect.width / 2;
-        const y = rect.bottom;
-        onSelection(cleaned, x, y);
-      } catch (err) {
-        onSelection(cleaned);
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+        const nativeRange = sel.getRangeAt(0);
+        const trimmed = trimRangePunctuation(nativeRange);
+        if (trimmed.word) {
+          targetRange = trimmed.cleanedRange;
+          word = trimmed.word;
+        }
       }
-    }, 10);
+
+      if (!targetRange || !word) {
+        const caretRange = (document as any).caretRangeFromPoint?.(clickX, clickY)
+          ?? (document as any).caretPositionFromPoint?.(clickX, clickY);
+
+        if (caretRange) {
+          let clickNode: Text | null = null;
+          let clickOffset = 0;
+
+          if (caretRange.startContainer?.nodeType === Node.TEXT_NODE) {
+            clickNode = caretRange.startContainer as Text;
+            clickOffset = caretRange.startOffset;
+          } else if (caretRange.offsetNode?.nodeType === Node.TEXT_NODE) {
+            clickNode = caretRange.offsetNode as Text;
+            clickOffset = caretRange.offset;
+          }
+
+          if (clickNode) {
+            const text = clickNode.textContent || '';
+            const wordCharRegex = /^[\p{L}\p{N}_']$/u;
+
+            let offset = clickOffset;
+            if (offset > 0 && (offset >= text.length || !wordCharRegex.test(text[offset]))) {
+              if (wordCharRegex.test(text[offset - 1])) {
+                offset = offset - 1;
+              }
+            }
+
+            let start = offset;
+            while (start > 0 && wordCharRegex.test(text[start - 1])) start--;
+
+            let end = offset;
+            while (end < text.length && wordCharRegex.test(text[end])) end++;
+
+            const fallbackRange = document.createRange();
+            fallbackRange.setStart(clickNode, start);
+            fallbackRange.setEnd(clickNode, end);
+
+            const w = fallbackRange.toString().trim();
+            if (w) {
+              targetRange = fallbackRange;
+              word = w;
+            }
+          }
+        }
+      }
+
+      if (targetRange && word) {
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(targetRange);
+        }
+        try {
+          const rect = targetRange.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.bottom;
+          onSelection(word, x, y);
+        } catch (err) {
+          onSelection(word);
+        }
+      }
+    }, 20);
   };
 
   const txtStyles = readThroughActive && rtSettings ? {
