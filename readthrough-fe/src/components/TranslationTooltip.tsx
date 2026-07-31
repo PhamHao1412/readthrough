@@ -330,31 +330,63 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
   }, [onClose]);
 
   const getPosition = (): React.CSSProperties => {
-    const width = Math.min(460, window.innerWidth - 32);
-    // Fixed height — never changes on re-render to prevent layout jump
-    const height = 440;
+    const width = Math.min(400, window.innerWidth - 32);
+
+    // GAP = breathing room between word edge and popup edge
+    const GAP = 10;
+    const WORD_HEIGHT = 28;
+
+    // y prop = bottom of selected word (rect.bottom from click event)
+    const wordBottom = y;
+    const wordTop = y - WORD_HEIGHT;
 
     const minLeft = 16;
     const maxLeft = Math.max(minLeft, window.innerWidth - width - 16);
-    const minTop = 64;
-    const maxTop = Math.max(minTop, window.innerHeight - height - 16);
+    const minTop = 64;  // stay below navbar
 
     let finalLeft: number;
     let finalTop: number;
+    let finalMaxHeight: number;
 
     if (dragPos) {
       finalLeft = Math.max(minLeft, Math.min(dragPos.x, maxLeft));
-      finalTop = Math.max(minTop, Math.min(dragPos.y, maxTop));
+      finalTop = Math.max(minTop, Math.min(dragPos.y, window.innerHeight - 200 - 8));
+      finalMaxHeight = Math.min(500, window.innerHeight - finalTop - 8);
     } else {
       const calcLeft = x - width / 2;
       finalLeft = Math.max(minLeft, Math.min(calcLeft, maxLeft));
 
-      if (y + 16 + height <= window.innerHeight - 16) {
-        finalTop = y + 16;
-      } else if (y - 16 - height >= minTop) {
-        finalTop = y - 16 - height;
+      // Space available above the word (between navbar bottom and word top)
+      const spaceAbove = wordTop - GAP - minTop;
+      // Space available below the word (between word bottom and viewport bottom)
+      const spaceBelow = window.innerHeight - wordBottom - GAP - 8;
+
+      // Minimum usable height for the popup (header + tabs + some content)
+      const MIN_USEFUL_HEIGHT = 220;
+      const MAX_HEIGHT = 500;
+
+      if (spaceAbove >= MIN_USEFUL_HEIGHT) {
+        // Preferred: place ABOVE the word — popup bottom = wordTop - GAP
+        finalMaxHeight = Math.min(MAX_HEIGHT, spaceAbove);
+        finalTop = wordTop - GAP - finalMaxHeight;
+        // clamp so we don't go above navbar
+        if (finalTop < minTop) {
+          finalTop = minTop;
+          finalMaxHeight = wordTop - GAP - minTop;
+        }
+      } else if (spaceBelow >= MIN_USEFUL_HEIGHT) {
+        // Fallback: place BELOW the word
+        finalTop = wordBottom + GAP;
+        finalMaxHeight = Math.min(MAX_HEIGHT, spaceBelow);
       } else {
-        finalTop = Math.max(minTop, Math.min(y + 16, maxTop));
+        // Neither side has enough room — pick the side with more space
+        if (spaceAbove >= spaceBelow) {
+          finalMaxHeight = Math.max(spaceAbove, MIN_USEFUL_HEIGHT);
+          finalTop = Math.max(minTop, wordTop - GAP - finalMaxHeight);
+        } else {
+          finalTop = wordBottom + GAP;
+          finalMaxHeight = Math.max(spaceBelow, MIN_USEFUL_HEIGHT);
+        }
       }
     }
 
@@ -363,7 +395,7 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
       left: `${finalLeft}px`,
       top: `${finalTop}px`,
       width: `${width}px`,
-      height: `${height}px`,
+      maxHeight: `${finalMaxHeight}px`,
       zIndex: 2000,
     };
   };

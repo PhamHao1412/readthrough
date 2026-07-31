@@ -135,7 +135,7 @@ export const parseMarkdownText = (text: string): { parsedBlocks: MarkdownBlock[]
     if (trimmed.startsWith('|')) {
       const startLine = i;
       const headers = trimmed.split('|').map(s => s.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
-      
+
       let separatorLine = (i + 1 < lines.length) ? lines[i + 1].trim() : '';
       if (separatorLine.startsWith('|') && /^[|:\-\s]+$/.test(separatorLine)) {
         const aligns = separatorLine.split('|')
@@ -229,14 +229,14 @@ export const parseMarkdownText = (text: string): { parsedBlocks: MarkdownBlock[]
     while (i < lines.length) {
       const nextLine = lines[i];
       const nextTrimmed = nextLine.trim();
-      
-      if (nextTrimmed === '' || 
-          nextLine.match(/^(#{1,6})\s+(.*)$/) ||
-          nextTrimmed.startsWith('```') ||
-          nextTrimmed.startsWith('>') ||
-          nextTrimmed.startsWith('|') ||
-          nextLine.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/) ||
-          /^(?:-{3,}|\*{3,}|\_{3,})$/.test(nextTrimmed)) {
+
+      if (nextTrimmed === '' ||
+        nextLine.match(/^(#{1,6})\s+(.*)$/) ||
+        nextTrimmed.startsWith('```') ||
+        nextTrimmed.startsWith('>') ||
+        nextTrimmed.startsWith('|') ||
+        nextLine.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/) ||
+        /^(?:-{3,}|\*{3,}|\_{3,})$/.test(nextTrimmed)) {
         break;
       }
 
@@ -536,20 +536,59 @@ const MathRenderer: React.FC<{ math: string; displayMode: boolean }> = ({ math, 
   return <span ref={containerRef}>{displayMode ? '$$' + math + '$$' : '$' + math + '$'}</span>;
 };
 
+const MD_WORD_CHAR = /^[\p{L}\p{N}_']$/u;
+
+const mdGetPrevTextNode = (node: Node): Text | null => {
+  const BLOCK = new Set(['P', 'DIV', 'SECTION', 'ARTICLE', 'BLOCKQUOTE', 'LI', 'TD', 'TH', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BR']);
+  let cur: Node | null = node;
+  while (cur) {
+    let prev: Node = cur.previousSibling!;
+    if (prev) {
+      while (prev.lastChild) prev = prev.lastChild;
+      if (prev.nodeType === Node.TEXT_NODE) return prev as Text;
+      if (prev.nodeType === Node.ELEMENT_NODE && BLOCK.has((prev as Element).tagName)) return null;
+      cur = prev;
+    } else {
+      cur = cur.parentNode;
+      if (!cur || (cur.nodeType === Node.ELEMENT_NODE && BLOCK.has((cur as Element).tagName))) return null;
+    }
+  }
+  return null;
+};
+
+const mdGetNextTextNode = (node: Node): Text | null => {
+  const BLOCK = new Set(['P', 'DIV', 'SECTION', 'ARTICLE', 'BLOCKQUOTE', 'LI', 'TD', 'TH', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BR']);
+  let cur: Node | null = node;
+  while (cur) {
+    let next: Node = cur.nextSibling!;
+    if (next) {
+      while (next.firstChild) next = next.firstChild;
+      if (next.nodeType === Node.TEXT_NODE) return next as Text;
+      if (next.nodeType === Node.ELEMENT_NODE && BLOCK.has((next as Element).tagName)) return null;
+      cur = next;
+    } else {
+      cur = cur.parentNode;
+      if (!cur || (cur.nodeType === Node.ELEMENT_NODE && BLOCK.has((cur as Element).tagName))) return null;
+    }
+  }
+  return null;
+};
+
 const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string } => {
-  const wordCharRegex = /^[\p{L}\p{N}_']$/u;
   const cloned = range.cloneRange();
 
   // 1. Trim trailing non-word characters
   while (!cloned.collapsed) {
     const endContainer = cloned.endContainer;
     const endOffset = cloned.endOffset;
-    if (endContainer.nodeType === Node.TEXT_NODE && endOffset > 0) {
-      const text = endContainer.textContent || '';
-      const char = text[endOffset - 1];
-      if (char && !wordCharRegex.test(char)) {
-        cloned.setEnd(endContainer, endOffset - 1);
-        continue;
+    if (endContainer.nodeType === Node.TEXT_NODE) {
+      if (endOffset > 0) {
+        const text = endContainer.textContent || '';
+        const char = text[endOffset - 1];
+        if (char && !MD_WORD_CHAR.test(char)) {
+          cloned.setEnd(endContainer, endOffset - 1);
+          continue;
+        }
       }
     }
     break;
@@ -563,7 +602,7 @@ const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string
       const text = startContainer.textContent || '';
       if (startOffset < text.length) {
         const char = text[startOffset];
-        if (char && !wordCharRegex.test(char)) {
+        if (char && !MD_WORD_CHAR.test(char)) {
           cloned.setStart(startContainer, startOffset + 1);
           continue;
         }
@@ -576,6 +615,79 @@ const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string
   return { cleanedRange: cloned, word };
 };
 
+const mdFindWordAtPoint = (x: number, y: number): { range: Range; word: string } | null => {
+  const caretInfo = (document as any).caretRangeFromPoint?.(x, y)
+    ?? (document as any).caretPositionFromPoint?.(x, y);
+  if (!caretInfo) return null;
+
+  let clickNode: Text | null = null;
+  let clickOffset = 0;
+
+  if (caretInfo.startContainer?.nodeType === Node.TEXT_NODE) {
+    clickNode = caretInfo.startContainer as Text;
+    clickOffset = caretInfo.startOffset;
+  } else if (caretInfo.offsetNode?.nodeType === Node.TEXT_NODE) {
+    clickNode = caretInfo.offsetNode as Text;
+    clickOffset = caretInfo.offset;
+  }
+  if (!clickNode) return null;
+
+  const text = clickNode.textContent || '';
+  let offset = clickOffset;
+  if (offset >= text.length) offset = text.length - 1;
+  if (offset > 0 && !MD_WORD_CHAR.test(text[offset] ?? '')) {
+    if (MD_WORD_CHAR.test(text[offset - 1])) offset--;
+  }
+  if (!MD_WORD_CHAR.test(text[offset] ?? '')) return null;
+
+  let start = offset;
+  while (start > 0 && MD_WORD_CHAR.test(text[start - 1])) start--;
+  let end = offset + 1;
+  while (end < text.length && MD_WORD_CHAR.test(text[end])) end++;
+
+  // Cross-text-node expansion (handles inline spans splitting a word)
+  let startNode: Text = clickNode;
+  let startOffset = start;
+  if (start === 0) {
+    let prevNode = mdGetPrevTextNode(clickNode);
+    while (prevNode) {
+      const pt = prevNode.textContent || '';
+      if (pt.length > 0 && MD_WORD_CHAR.test(pt[pt.length - 1])) {
+        let ps = pt.length - 1;
+        while (ps > 0 && MD_WORD_CHAR.test(pt[ps - 1])) ps--;
+        startNode = prevNode;
+        startOffset = ps;
+        if (ps > 0) break;
+        prevNode = mdGetPrevTextNode(prevNode);
+      } else break;
+    }
+  }
+
+  let endNode: Text = clickNode;
+  let endOffset = end;
+  if (end === text.length) {
+    let nextNode = mdGetNextTextNode(clickNode);
+    while (nextNode) {
+      const nt = nextNode.textContent || '';
+      if (nt.length > 0 && MD_WORD_CHAR.test(nt[0])) {
+        let ne = 1;
+        while (ne < nt.length && MD_WORD_CHAR.test(nt[ne])) ne++;
+        endNode = nextNode;
+        endOffset = ne;
+        if (ne < nt.length) break;
+        nextNode = mdGetNextTextNode(nextNode);
+      } else break;
+    }
+  }
+
+  const range = document.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
+  const w = range.toString().trim();
+  return w ? { range, word: w } : null;
+};
+
+
 export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   bookId,
   url,
@@ -587,12 +699,12 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   rtSettings,
 }) => {
   const { fetchWithAuth } = useAuth();
-  
+
   const [rawContent, setRawContent] = useState<string>('');
   const [blocks, setBlocks] = useState<MarkdownBlock[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
-  
+
   // View mode & content states
   const [viewMode, setViewMode] = useState<'editor' | 'split' | 'preview'>('preview');
   const [editContent, setEditContent] = useState<string>('');
@@ -611,7 +723,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   });
 
   const [copiedBlockId, setCopiedBlockId] = useState<string | null>(null);
-  
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const highlightPreRef = useRef<HTMLPreElement>(null);
@@ -642,7 +754,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
           const style = window.getComputedStyle(editor);
           const paddingTop = parseFloat(style.paddingTop) || 0;
           const lineElements = highlightPreRef.current?.querySelectorAll('.md-editor-line');
-          
+
           if (lineElements && lineElements[pendingScrollLine]) {
             const lineEl = lineElements[pendingScrollLine] as HTMLElement;
             editor.scrollTop = lineEl.offsetTop - paddingTop;
@@ -666,9 +778,9 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
             const containerRect = preview.getBoundingClientRect();
             const targetRect = targetElement.getBoundingClientRect();
             const targetOffsetTop = targetRect.top - containerRect.top + preview.scrollTop;
-            
+
             preview.scrollTop = Math.max(0, targetOffsetTop - 20);
-            
+
             setTimeout(() => {
               ignoreScrollEventRef.current = false;
             }, 200);
@@ -754,13 +866,13 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
   useEffect(() => {
     if (initialCfi && !loading && viewMode !== 'editor') {
       if (initialCfi === lastActiveHeadingRef.current) return;
-      
+
       // Small timeout to ensure DOM is fully rendered
       const timer = setTimeout(() => {
         const targetElement = document.getElementById(initialCfi);
         if (targetElement && scrollContainerRef.current) {
           ignoreScrollEventRef.current = true;
-          
+
           const container = scrollContainerRef.current;
           const containerRect = container.getBoundingClientRect();
           const targetRect = targetElement.getBoundingClientRect();
@@ -770,7 +882,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
             top: targetOffsetTop - 20,
             behavior: 'smooth'
           });
-          
+
           lastActiveHeadingRef.current = initialCfi;
 
           // Release ignore lock after scroll completes
@@ -795,14 +907,14 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
     if (headings.length === 0) return;
 
     let activeHeadingId = '';
-    
+
     // Find the heading closest to the top of container viewport
     for (const h of headings) {
       const el = document.getElementById(h.id);
       if (el) {
         const elRect = el.getBoundingClientRect();
         const elRelativeTop = elRect.top - containerRect.top;
-        
+
         // If heading is near the top or has just scrolled past
         if (elRelativeTop <= 100) {
           activeHeadingId = h.id;
@@ -840,85 +952,47 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
     e.preventDefault();
     e.stopPropagation();
 
-    const clickX = e.clientX;
-    const clickY = e.clientY;
+    // ✅ Read selection SYNCHRONOUSLY — no setTimeout race condition.
+    // By the time 'dblclick' fires the browser has already applied native word selection.
+    let targetRange: Range | null = null;
+    let word = '';
 
-    setTimeout(() => {
-      let targetRange: Range | null = null;
-      let word = '';
-
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
-        const nativeRange = sel.getRangeAt(0);
-        const trimmed = trimRangePunctuation(nativeRange);
-        if (trimmed.word) {
-          targetRange = trimmed.cleanedRange;
-          word = trimmed.word;
-        }
+    // Path 1: Browser's native word selection
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+      const nativeRange = sel.getRangeAt(0);
+      const trimmed = trimRangePunctuation(nativeRange);
+      if (trimmed.word) {
+        targetRange = trimmed.cleanedRange;
+        word = trimmed.word;
       }
+    }
 
-      if (!targetRange || !word) {
-        const caretRange = (document as any).caretRangeFromPoint?.(clickX, clickY)
-          ?? (document as any).caretPositionFromPoint?.(clickX, clickY);
-
-        if (caretRange) {
-          let clickNode: Text | null = null;
-          let clickOffset = 0;
-
-          if (caretRange.startContainer?.nodeType === Node.TEXT_NODE) {
-            clickNode = caretRange.startContainer as Text;
-            clickOffset = caretRange.startOffset;
-          } else if (caretRange.offsetNode?.nodeType === Node.TEXT_NODE) {
-            clickNode = caretRange.offsetNode as Text;
-            clickOffset = caretRange.offset;
-          }
-
-          if (clickNode) {
-            const text = clickNode.textContent || '';
-            const wordCharRegex = /^[\p{L}\p{N}_']$/u;
-
-            let offset = clickOffset;
-            if (offset > 0 && (offset >= text.length || !wordCharRegex.test(text[offset]))) {
-              if (wordCharRegex.test(text[offset - 1])) {
-                offset = offset - 1;
-              }
-            }
-
-            let start = offset;
-            while (start > 0 && wordCharRegex.test(text[start - 1])) start--;
-
-            let end = offset;
-            while (end < text.length && wordCharRegex.test(text[end])) end++;
-
-            const fallbackRange = document.createRange();
-            fallbackRange.setStart(clickNode, start);
-            fallbackRange.setEnd(clickNode, end);
-
-            const w = fallbackRange.toString().trim();
-            if (w) {
-              targetRange = fallbackRange;
-              word = w;
-            }
-          }
-        }
+    // Path 2: Fallback — find word at click position, expanding across text node boundaries
+    if (!targetRange || !word) {
+      const result = mdFindWordAtPoint(e.clientX, e.clientY);
+      if (result) {
+        targetRange = result.range;
+        word = result.word;
       }
+    }
 
-      if (targetRange && word) {
-        if (sel) {
-          sel.removeAllRanges();
-          sel.addRange(targetRange);
-        }
-        try {
-          const rect = targetRange.getBoundingClientRect();
-          const x = rect.left + rect.width / 2;
-          const y = rect.bottom;
-          onSelection(word, x, y);
-        } catch (err) {
-          onSelection(word);
-        }
+    if (targetRange && word) {
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(targetRange);
       }
-    }, 20);
+      try {
+        const rect = targetRange.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.bottom;
+        onSelection(word, x, y);
+      } catch (err) {
+        onSelection(word);
+      }
+    }
   };
+
 
   // Keyboard zoom control (similar to TxtViewer)
   useEffect(() => {
@@ -968,7 +1042,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
       });
 
       if (!res.ok) throw new Error('Failed to save content on server.');
-      
+
       // Update DB baseline
       setRawContent(editContent);
 
@@ -1011,7 +1085,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
       const lineElements = highlightPreRef.current?.querySelectorAll('.md-editor-line');
       const previewRect = preview.getBoundingClientRect();
       const list: Checkpoint[] = [];
-      
+
       // Start checkpoint
       list.push({ id: 'start', editorScroll: 0, previewScroll: 0 });
 
@@ -1028,7 +1102,7 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
         // Retrieve the actual visual line element from the highlight pre
         const lineEl = lineElements?.[block.startLine] as HTMLElement | undefined;
         if (!lineEl) continue;
-        
+
         const editorScroll = lineEl.offsetTop;
 
         list.push({
@@ -1296,9 +1370,9 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
 
   const mdStyles = readThroughActive && rtSettings ? {
     fontFamily: rtSettings.fontFamily === 'serif' ? "'Lora', Georgia, serif" :
-                rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
-                rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
-                rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" : undefined,
+      rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
+        rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
+          rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" : undefined,
     fontSize: `${14 + (rtSettings.fontSizeLevel - 1) * 2}px`,
     lineHeight: rtSettings.lineHeight,
     paddingLeft: rtSettings.margin === 'narrow' ? '4%' : rtSettings.margin === 'normal' ? '12%' : '20%',
@@ -1331,114 +1405,114 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
       {!readThroughActive && (
         <div className="md-controls">
           <div className="md-controls-group">
-          {editContent !== rawContent && (
-            <button
-              className="ctrl-btn active"
-              onClick={handleSaveChanges}
-              disabled={saving}
-              title="Save changes"
-              style={{ color: 'var(--accent)' }}
-            >
-              {saving ? (
-                <Loader2 size={15} style={{ animation: 'spin 0.7s linear infinite' }} />
-              ) : (
-                <Save size={15} />
-              )}
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, marginLeft: '4px' }}>
-                {saving ? 'Saving...' : 'Save'}
-              </span>
-            </button>
-          )}
+            {editContent !== rawContent && (
+              <button
+                className="ctrl-btn active"
+                onClick={handleSaveChanges}
+                disabled={saving}
+                title="Save changes"
+                style={{ color: 'var(--accent)' }}
+              >
+                {saving ? (
+                  <Loader2 size={15} style={{ animation: 'spin 0.7s linear infinite' }} />
+                ) : (
+                  <Save size={15} />
+                )}
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, marginLeft: '4px' }}>
+                  {saving ? 'Saving...' : 'Save'}
+                </span>
+              </button>
+            )}
 
-          {editContent !== rawContent && (
+            {editContent !== rawContent && (
+              <button
+                className="ctrl-btn"
+                onClick={() => setEditContent(rawContent)}
+                title="Discard changes"
+                style={{ fontSize: '0.8rem', fontWeight: 600 }}
+              >
+                Reset
+              </button>
+            )}
+          </div>
+
+          {/* Font styling configuration */}
+          <div className="md-controls-group">
+            {/* Font Family selector (only visible when preview pane is active) */}
+            {viewMode !== 'editor' && (
+              <button
+                className="ctrl-btn"
+                onClick={() => fontFamily === 'sans-serif' ? setFontFamily('serif') : setFontFamily('sans-serif')}
+                title="Change font family"
+                style={{ fontSize: '0.78rem', fontWeight: 700, padding: '0 8px' }}
+              >
+                {fontFamily === 'sans-serif' ? 'Serif font' : 'Sans font'}
+              </button>
+            )}
+
+            {/* Font Zoom controls */}
             <button
               className="ctrl-btn"
-              onClick={() => setEditContent(rawContent)}
-              title="Discard changes"
-              style={{ fontSize: '0.8rem', fontWeight: 600 }}
+              onClick={() => setFontSize(p => Math.max(14, p - 2))}
+              title="Decrease font size"
             >
-              Reset
+              <Type size={13} />
             </button>
-          )}
-        </div>
-
-        {/* Font styling configuration */}
-        <div className="md-controls-group">
-          {/* Font Family selector (only visible when preview pane is active) */}
-          {viewMode !== 'editor' && (
+            <span className="ctrl-label" style={{ fontSize: '0.75rem', minWidth: '70px', textAlign: 'center' }}>
+              {fontSize}px
+            </span>
             <button
               className="ctrl-btn"
-              onClick={() => fontFamily === 'sans-serif' ? setFontFamily('serif') : setFontFamily('sans-serif')}
-              title="Change font family"
-              style={{ fontSize: '0.78rem', fontWeight: 700, padding: '0 8px' }}
+              onClick={() => setFontSize(p => Math.min(32, p + 2))}
+              title="Increase font size"
             >
-              {fontFamily === 'sans-serif' ? 'Serif font' : 'Sans font'}
+              <Type size={18} />
             </button>
-          )}
+          </div>
 
-          {/* Font Zoom controls */}
-          <button
-            className="ctrl-btn"
-            onClick={() => setFontSize(p => Math.max(14, p - 2))}
-            title="Decrease font size"
-          >
-            <Type size={13} />
-          </button>
-          <span className="ctrl-label" style={{ fontSize: '0.75rem', minWidth: '70px', textAlign: 'center' }}>
-            {fontSize}px
-          </span>
-          <button
-            className="ctrl-btn"
-            onClick={() => setFontSize(p => Math.min(32, p + 2))}
-            title="Increase font size"
-          >
-            <Type size={18} />
-          </button>
+          {/* View Mode Layout toggles */}
+          <div className="md-controls-group md-mode-toggles">
+            {/* Button 1: Editor only */}
+            <button
+              className={`md-mode-btn md-mode-editor ${viewMode === 'editor' ? 'active' : ''}`}
+              onClick={() => handleViewModeChange('editor')}
+              title="Show Editor Only"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="16 18 22 12 16 6"></polyline>
+                <polyline points="8 6 2 12 8 18"></polyline>
+              </svg>
+            </button>
+
+            {/* Button 2: Editor and Preview (Split) */}
+            <button
+              className={`md-mode-btn md-mode-split ${viewMode === 'split' ? 'active' : ''}`}
+              onClick={() => handleViewModeChange('split')}
+              title="Show Editor and Preview (Split)"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="12" y1="3" x2="12" y2="21"></line>
+                <polyline points="8 10 6 12 8 14"></polyline>
+                <polyline points="10 10 12 12 10 14" style={{ display: 'none' }}></polyline>
+              </svg>
+            </button>
+
+            {/* Button 3: Preview only */}
+            <button
+              className={`md-mode-btn md-mode-preview ${viewMode === 'preview' ? 'active' : ''}`}
+              onClick={() => handleViewModeChange('preview')}
+              title="Show Preview Only"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="12" cy="12" r="2.5"></circle>
+                <path d="M8 12s2-3.5 4-3.5 4 3.5 4 3.5-2 3.5-4 3.5-4-3.5-4-3.5z"></path>
+              </svg>
+            </button>
+          </div>
         </div>
-
-        {/* View Mode Layout toggles */}
-        <div className="md-controls-group md-mode-toggles">
-          {/* Button 1: Editor only */}
-          <button
-            className={`md-mode-btn md-mode-editor ${viewMode === 'editor' ? 'active' : ''}`}
-            onClick={() => handleViewModeChange('editor')}
-            title="Show Editor Only"
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="16 18 22 12 16 6"></polyline>
-              <polyline points="8 6 2 12 8 18"></polyline>
-            </svg>
-          </button>
-
-          {/* Button 2: Editor and Preview (Split) */}
-          <button
-            className={`md-mode-btn md-mode-split ${viewMode === 'split' ? 'active' : ''}`}
-            onClick={() => handleViewModeChange('split')}
-            title="Show Editor and Preview (Split)"
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="12" y1="3" x2="12" y2="21"></line>
-              <polyline points="8 10 6 12 8 14"></polyline>
-              <polyline points="10 10 12 12 10 14" style={{ display: 'none' }}></polyline>
-            </svg>
-          </button>
-
-          {/* Button 3: Preview only */}
-          <button
-            className={`md-mode-btn md-mode-preview ${viewMode === 'preview' ? 'active' : ''}`}
-            onClick={() => handleViewModeChange('preview')}
-            title="Show Preview Only"
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <circle cx="12" cy="12" r="2.5"></circle>
-              <path d="M8 12s2-3.5 4-3.5 4 3.5 4 3.5-2 3.5-4 3.5-4-3.5-4-3.5z"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
-    )}
+      )}
 
       {/* Body content workspace */}
       <div className="md-viewer-workspace">

@@ -57,7 +57,7 @@ export const BookList: React.FC<BookListProps> = ({
             resolve();
           } else {
             let msg = 'Upload failed.';
-            try { msg = JSON.parse(xhr.responseText).message || msg; } catch {}
+            try { msg = JSON.parse(xhr.responseText).message || msg; } catch { }
             reject(new Error(msg));
           }
         };
@@ -84,7 +84,7 @@ export const BookList: React.FC<BookListProps> = ({
 
   const handlePasteSave = async (content: string, title: string, author: string) => {
     const file = new File([content], `${title}.md`, { type: 'text/markdown' });
-    
+
     setUploading(true);
     setUploadProgress(0);
     setError('');
@@ -109,7 +109,7 @@ export const BookList: React.FC<BookListProps> = ({
             resolve();
           } else {
             let msg = 'Save failed.';
-            try { msg = JSON.parse(xhr.responseText).message || msg; } catch {}
+            try { msg = JSON.parse(xhr.responseText).message || msg; } catch { }
             reject(new Error(msg));
           }
         };
@@ -287,8 +287,8 @@ export const BookList: React.FC<BookListProps> = ({
                       {book.total_pages > 0 && book.file_type !== 'epub' && book.file_type !== 'md'
                         ? `Page ${book.current_page}/${book.total_pages}`
                         : book.file_type === 'epub' || book.file_type === 'md'
-                        ? book.file_type.toUpperCase()
-                        : 'Unread'}
+                          ? book.file_type.toUpperCase()
+                          : 'Unread'}
                     </span>
                   </div>
                   <div className="progress-track">

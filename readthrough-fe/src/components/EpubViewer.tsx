@@ -19,21 +19,74 @@ interface EpubViewerProps {
   };
 }
 
+const WORD_CHAR = /^[\p{L}\p{N}_']$/u;
+
+/**
+ * Walk the DOM tree to find the previous TEXT_NODE sibling (across inline elements).
+ * Stops at block-level boundaries to avoid crossing paragraph/section borders.
+ */
+const getPrevTextNode = (node: Node): Text | null => {
+  const BLOCK_TAGS = new Set(['P', 'DIV', 'SECTION', 'ARTICLE', 'BLOCKQUOTE', 'LI', 'TD', 'TH', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BR']);
+  let cur: Node | null = node;
+  while (cur) {
+    let prev: Node = cur.previousSibling!;
+    if (prev) {
+      // Walk to the deepest last descendant
+      while (prev.lastChild) prev = prev.lastChild;
+      if (prev.nodeType === Node.TEXT_NODE) return prev as Text;
+      if (prev.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has((prev as Element).tagName)) return null;
+      cur = prev;
+    } else {
+      cur = cur.parentNode;
+      if (!cur || (cur.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has((cur as Element).tagName))) return null;
+    }
+  }
+  return null;
+};
+
+/**
+ * Walk the DOM tree to find the next TEXT_NODE sibling (across inline elements).
+ */
+const getNextTextNode = (node: Node): Text | null => {
+  const BLOCK_TAGS = new Set(['P', 'DIV', 'SECTION', 'ARTICLE', 'BLOCKQUOTE', 'LI', 'TD', 'TH', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BR']);
+  let cur: Node | null = node;
+  while (cur) {
+    let next: Node = cur.nextSibling!;
+    if (next) {
+      while (next.firstChild) next = next.firstChild;
+      if (next.nodeType === Node.TEXT_NODE) return next as Text;
+      if (next.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has((next as Element).tagName)) return null;
+      cur = next;
+    } else {
+      cur = cur.parentNode;
+      if (!cur || (cur.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has((cur as Element).tagName))) return null;
+    }
+  }
+  return null;
+};
+
+/**
+ * Trim leading/trailing punctuation from a Range.
+ * Also handles the endOffset=0 edge case where the range boundary sits at
+ * a text-node boundary but the word actually ends in the previous node.
+ */
 const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string } => {
-  const wordCharRegex = /^[\p{L}\p{N}_']$/u;
   const cloned = range.cloneRange();
 
   // 1. Trim trailing non-word characters
-  while (!cloned.collapsed) {
+  outer: while (!cloned.collapsed) {
     const endContainer = cloned.endContainer;
     const endOffset = cloned.endOffset;
-    if (endContainer.nodeType === Node.TEXT_NODE && endOffset > 0) {
-      const text = endContainer.textContent || '';
-      const char = text[endOffset - 1];
-      if (char && !wordCharRegex.test(char)) {
-        cloned.setEnd(endContainer, endOffset - 1);
-        continue;
+    if (endContainer.nodeType === Node.TEXT_NODE) {
+      if (endOffset > 0) {
+        const text = endContainer.textContent || '';
+        const char = text[endOffset - 1];
+        if (char && !WORD_CHAR.test(char)) {
+          cloned.setEnd(endContainer, endOffset - 1);
+          continue;
+        }
       }
+      // endOffset === 0: range ends BEFORE this text node, nothing to trim here
     }
     break;
   }
@@ -46,7 +99,7 @@ const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string
       const text = startContainer.textContent || '';
       if (startOffset < text.length) {
         const char = text[startOffset];
-        if (char && !wordCharRegex.test(char)) {
+        if (char && !WORD_CHAR.test(char)) {
           cloned.setStart(startContainer, startOffset + 1);
           continue;
         }
@@ -58,6 +111,99 @@ const trimRangePunctuation = (range: Range): { cleanedRange: Range; word: string
   const word = cloned.toString().trim();
   return { cleanedRange: cloned, word };
 };
+
+/**
+ * Given a click position (x, y) inside a document, find the full word at that point.
+ * Unlike caretRangeFromPoint (which only returns a caret in ONE text node),
+ * this function also expands across adjacent text nodes when a word is split
+ * by inline elements (common in epub.js rendering).
+ */
+const findWordAtPoint = (doc: Document, x: number, y: number): { range: Range; word: string } | null => {
+  const caretInfo = (doc as any).caretRangeFromPoint?.(x, y)
+    ?? (doc as any).caretPositionFromPoint?.(x, y);
+  if (!caretInfo) return null;
+
+  let clickNode: Text | null = null;
+  let clickOffset = 0;
+
+  if (caretInfo.startContainer?.nodeType === Node.TEXT_NODE) {
+    clickNode = caretInfo.startContainer as Text;
+    clickOffset = caretInfo.startOffset;
+  } else if (caretInfo.offsetNode?.nodeType === Node.TEXT_NODE) {
+    clickNode = caretInfo.offsetNode as Text;
+    clickOffset = caretInfo.offset;
+  }
+  if (!clickNode) return null;
+
+  const text = clickNode.textContent || '';
+  let offset = clickOffset;
+
+  // Clamp and adjust to land on a word character
+  if (offset >= text.length) offset = text.length - 1;
+  if (offset > 0 && !WORD_CHAR.test(text[offset] ?? '')) {
+    if (WORD_CHAR.test(text[offset - 1])) offset--;
+  }
+  if (!WORD_CHAR.test(text[offset] ?? '')) return null;
+
+  // Expand left within the current text node
+  let start = offset;
+  while (start > 0 && WORD_CHAR.test(text[start - 1])) start--;
+
+  // Expand right within the current text node
+  let end = offset + 1;
+  while (end < text.length && WORD_CHAR.test(text[end])) end++;
+
+  // --- Cross-text-node expansion ---
+  // If the word starts at offset 0, check if the previous text node continues the word
+  let startNode: Text = clickNode;
+  let startOffset = start;
+  if (start === 0) {
+    let prevNode = getPrevTextNode(clickNode);
+    while (prevNode) {
+      const prevText = prevNode.textContent || '';
+      if (prevText.length > 0 && WORD_CHAR.test(prevText[prevText.length - 1])) {
+        // Word extends into this previous node — find its start there
+        let prevStart = prevText.length - 1;
+        while (prevStart > 0 && WORD_CHAR.test(prevText[prevStart - 1])) prevStart--;
+        startNode = prevNode;
+        startOffset = prevStart;
+        if (prevStart > 0) break; // might extend even further — but limit to one hop
+        prevNode = getPrevTextNode(prevNode);
+      } else {
+        break;
+      }
+    }
+  }
+
+  // If the word ends at text.length, check if the next text node continues the word
+  let endNode: Text = clickNode;
+  let endOffset = end;
+  if (end === text.length) {
+    let nextNode = getNextTextNode(clickNode);
+    while (nextNode) {
+      const nextText = nextNode.textContent || '';
+      if (nextText.length > 0 && WORD_CHAR.test(nextText[0])) {
+        // Word extends into this next node — find its end there
+        let nextEnd = 1;
+        while (nextEnd < nextText.length && WORD_CHAR.test(nextText[nextEnd])) nextEnd++;
+        endNode = nextNode;
+        endOffset = nextEnd;
+        if (nextEnd < nextText.length) break; // might extend even further — limit to one hop
+        nextNode = getNextTextNode(nextNode);
+      } else {
+        break;
+      }
+    }
+  }
+
+  const range = doc.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
+
+  const w = range.toString().trim();
+  return w ? { range, word: w } : null;
+};
+
 
 export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
   bookId,
@@ -152,91 +298,57 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
             e.preventDefault();
             e.stopPropagation();
 
-            const clickX = e.clientX;
-            const clickY = e.clientY;
+            // ✅ Read selection SYNCHRONOUSLY — no setTimeout.
+            // By the time 'dblclick' fires the browser has already applied native word selection.
+            // A 20ms timeout created a race condition: the 'readthrough-click-outside' mousedown
+            // handler could clear the selection before the timeout ran, causing the fallback
+            // (caretRangeFromPoint) to be used instead — returning only a partial text node.
+            const win = doc.defaultView || contents.window;
+            let targetRange: Range | null = null;
+            let word = '';
 
-            setTimeout(() => {
-              const win = doc.defaultView || contents.window;
-              let targetRange: Range | null = null;
-              let word = '';
-
-              const sel = win?.getSelection();
-              if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
-                const nativeRange = sel.getRangeAt(0);
-                const trimmed = trimRangePunctuation(nativeRange);
-                if (trimmed.word) {
-                  targetRange = trimmed.cleanedRange;
-                  word = trimmed.word;
-                }
+            // Path 1: Use browser's native word selection (most reliable)
+            const sel = win?.getSelection();
+            if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+              const nativeRange = sel.getRangeAt(0);
+              const trimmed = trimRangePunctuation(nativeRange);
+              if (trimmed.word) {
+                targetRange = trimmed.cleanedRange;
+                word = trimmed.word;
               }
+            }
 
-              if (!targetRange || !word) {
-                const caretRange = (doc as any).caretRangeFromPoint?.(clickX, clickY)
-                  ?? (doc as any).caretPositionFromPoint?.(clickX, clickY);
-
-                if (caretRange) {
-                  let clickNode: Text | null = null;
-                  let clickOffset = 0;
-
-                  if (caretRange.startContainer?.nodeType === Node.TEXT_NODE) {
-                    clickNode = caretRange.startContainer as Text;
-                    clickOffset = caretRange.startOffset;
-                  } else if (caretRange.offsetNode?.nodeType === Node.TEXT_NODE) {
-                    clickNode = caretRange.offsetNode as Text;
-                    clickOffset = caretRange.offset;
-                  }
-
-                  if (clickNode) {
-                    const text = clickNode.textContent || '';
-                    const wordCharRegex = /^[\p{L}\p{N}_']$/u;
-
-                    let offset = clickOffset;
-                    if (offset > 0 && (offset >= text.length || !wordCharRegex.test(text[offset]))) {
-                      if (wordCharRegex.test(text[offset - 1])) {
-                        offset = offset - 1;
-                      }
-                    }
-
-                    let start = offset;
-                    while (start > 0 && wordCharRegex.test(text[start - 1])) start--;
-
-                    let end = offset;
-                    while (end < text.length && wordCharRegex.test(text[end])) end++;
-
-                    const fallbackRange = doc.createRange();
-                    fallbackRange.setStart(clickNode, start);
-                    fallbackRange.setEnd(clickNode, end);
-
-                    const w = fallbackRange.toString().trim();
-                    if (w) {
-                      targetRange = fallbackRange;
-                      word = w;
-                    }
-                  }
-                }
+            // Path 2: Fallback — manually locate word at click position.
+            // findWordAtPoint expands across adjacent text nodes so epub.js-split
+            // words (e.g. "operat" + "e" in separate spans) are found completely.
+            if (!targetRange || !word) {
+              const result = findWordAtPoint(doc, e.clientX, e.clientY);
+              if (result) {
+                targetRange = result.range;
+                word = result.word;
               }
+            }
 
-              if (targetRange && word) {
-                if (sel) {
-                  sel.removeAllRanges();
-                  sel.addRange(targetRange);
-                }
-                try {
-                  const rect = targetRange.getBoundingClientRect();
-                  const iframe = containerRef.current?.querySelector('iframe');
-                  if (iframe) {
-                    const iframeRect = iframe.getBoundingClientRect();
-                    const x = rect.left + rect.width / 2 + iframeRect.left;
-                    const y = rect.bottom + iframeRect.top;
-                    onSelection(word, x, y);
-                  } else {
-                    onSelection(word);
-                  }
-                } catch (err) {
+            if (targetRange && word) {
+              if (sel) {
+                sel.removeAllRanges();
+                sel.addRange(targetRange);
+              }
+              try {
+                const rect = targetRange.getBoundingClientRect();
+                const iframe = containerRef.current?.querySelector('iframe');
+                if (iframe) {
+                  const iframeRect = iframe.getBoundingClientRect();
+                  const x = rect.left + rect.width / 2 + iframeRect.left;
+                  const y = rect.bottom + iframeRect.top;
+                  onSelection(word, x, y);
+                } else {
                   onSelection(word);
                 }
+              } catch (err) {
+                onSelection(word);
               }
-            }, 20);
+            }
           }, true);
           doc.addEventListener('mousedown', () => {
             if (readThroughActive) {
@@ -264,9 +376,11 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
                 (window.document.activeElement as HTMLElement)?.blur();
                 rendition.prev();
               } else if (e.key === 'Escape') {
-                if (readThroughActive) {
-                  window.parent.dispatchEvent(new CustomEvent('readthrough-escape-key'));
-                }
+                try {
+                  doc.defaultView?.getSelection()?.removeAllRanges();
+                  doc.getSelection()?.removeAllRanges();
+                } catch (err) {}
+                window.parent.dispatchEvent(new CustomEvent('readthrough-escape-key'));
               }
             }
           });
@@ -334,7 +448,7 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
   // Update styles dynamically when settings or theme changes
   useEffect(() => {
     if (!renditionRef.current) return;
-    
+
     // Calculate values
     const activeFontSize = readThroughActive && rtSettings ? (80 + (rtSettings.fontSizeLevel - 1) * 15) : fontSize;
     const activePadding = readThroughActive && rtSettings
@@ -343,10 +457,10 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
     const activeLineHeight = readThroughActive && rtSettings ? rtSettings.lineHeight : '1.85';
     const activeFontFamily = readThroughActive && rtSettings
       ? (rtSettings.fontFamily === 'serif' ? "'Lora', Georgia, serif" :
-         rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
-         rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
-         rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" :
-         "'Lora', Georgia, serif")
+        rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
+          rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
+            rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" :
+              "'Lora', Georgia, serif")
       : "'Lora', 'Playfair Display', Georgia, serif";
 
     const activeBgColor = readThroughActive ? 'transparent !important' : '';
@@ -407,12 +521,22 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
     const handlePrev = () => {
       renditionRef.current?.prev();
     };
+    const handleClearSelection = () => {
+      window.getSelection()?.removeAllRanges();
+      try {
+        const iframe = containerRef.current?.querySelector('iframe');
+        iframe?.contentWindow?.getSelection()?.removeAllRanges();
+        iframe?.contentDocument?.getSelection()?.removeAllRanges();
+      } catch (e) {}
+    };
 
     window.addEventListener('readthrough-next-page', handleNext);
     window.addEventListener('readthrough-prev-page', handlePrev);
+    window.addEventListener('readthrough-clear-selection', handleClearSelection);
     return () => {
       window.removeEventListener('readthrough-next-page', handleNext);
       window.removeEventListener('readthrough-prev-page', handlePrev);
+      window.removeEventListener('readthrough-clear-selection', handleClearSelection);
     };
   }, []);
 

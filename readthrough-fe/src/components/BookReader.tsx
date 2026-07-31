@@ -225,7 +225,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     const resetHudTimeout = () => {
       setHudVisible(true);
       if (hudTimeoutRef.current) window.clearTimeout(hudTimeoutRef.current);
-      
+
       if (!showRtSettings && !showRtToc) {
         hudTimeoutRef.current = window.setTimeout(() => {
           setHudVisible(false);
@@ -248,14 +248,30 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     };
   }, [readThroughActive, showRtSettings, showRtToc]);
 
-  // Kindle Mode: Click outside or Escape key to close floating popups (TOC, Settings, TranslationTooltip)
+  // Click outside or Escape key to close floating popups & clear text selection (works in both normal & Kindle modes)
   useEffect(() => {
-    if (!readThroughActive) return;
+    const clearSelection = () => {
+      // Clear browser text selection in main window
+      window.getSelection()?.removeAllRanges();
+      // Clear selection inside any iframe (e.g. EPUB / PDF)
+      const iframes = document.querySelectorAll('iframe');
+      iframes.forEach((iframe) => {
+        try {
+          iframe.contentWindow?.getSelection()?.removeAllRanges();
+          iframe.contentDocument?.getSelection()?.removeAllRanges();
+        } catch (e) {}
+      });
+      // Broadcast clear custom highlight event for PDF/EPUB components
+      window.dispatchEvent(new CustomEvent('readthrough-clear-selection'));
+    };
 
     const handleOutsideEvent = () => {
-      setShowRtSettings(false);
-      setShowRtToc(false);
-      setActiveSelection(null);
+      if (showRtSettings) setShowRtSettings(false);
+      if (showRtToc) setShowRtToc(false);
+      if (activeSelection) {
+        setActiveSelection(null);
+      }
+      clearSelection();
     };
 
     const handleGlobalClick = (e: MouseEvent) => {
@@ -275,6 +291,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       // Close active selection tooltip if clicked outside selection tooltip
       if (activeSelection && !target.closest('.translation-tooltip')) {
         setActiveSelection(null);
+        clearSelection();
       }
     };
 
@@ -295,7 +312,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       window.removeEventListener('readthrough-click-outside', handleOutsideEvent);
       window.removeEventListener('readthrough-escape-key', handleOutsideEvent);
     };
-  }, [readThroughActive, showRtSettings, showRtToc, activeSelection]);
+  }, [showRtSettings, showRtToc, activeSelection]);
 
   // Table of Contents and Navigation states
   const [outline, setOutline] = useState<any[]>([]);
@@ -626,7 +643,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         const urlRes = await fetchWithAuth(`/api/v1/books/${book.id}/download-url`);
         if (!urlRes.ok) throw new Error('Failed to retrieve download link.');
         const urlJson = await urlRes.json();
-        
+
         if (!urlJson.succeeded || !urlJson.data?.url) {
           throw new Error('Invalid download response.');
         }
@@ -643,7 +660,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         }
 
         if (!fileRes.ok) throw new Error('Failed to download book content file.');
-        
+
         // Clone the response to store it in cache and get the blob for current render
         const fileResClone = fileRes.clone();
         const blob = await fileRes.blob();
@@ -654,7 +671,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         console.log("[BookReaderDebug] Contains Netflix:", text.toLowerCase().includes("netflix"));
         console.log("[BookReaderDebug] Contains Twitter:", text.toLowerCase().includes("twitter"));
         console.log("[BookReaderDebug] End of book text:", text.substring(Math.max(0, text.length - 1000)));
-        
+
         try {
           await cache.put(cacheKey, fileResClone);
           console.log('[Cache] Saved book content to local cache');
@@ -883,7 +900,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
 
     // Get the parent text layer container (which contains all line elements)
     const textLayer = currentLineElement.parentElement;
-    
+
     let fullText = currentLineElement.textContent || '';
 
     // If we have a text layer containing multiple line elements (typical in PDF and EPUB renderers)
@@ -891,18 +908,18 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       // Find the index of the current line among siblings
       const siblings = Array.from(textLayer.children);
       const curIdx = siblings.indexOf(currentLineElement);
-      
+
       if (curIdx !== -1) {
         // Collect 1-2 lines before and 1-2 lines after to get complete sentences
         const linesBefore: string[] = [];
         const linesAfter: string[] = [];
-        
+
         // Take up to 2 lines before
         for (let i = Math.max(0, curIdx - 2); i < curIdx; i++) {
           const text = siblings[i].textContent?.trim() || '';
           if (text) linesBefore.push(text);
         }
-        
+
         // Take up to 2 lines after
         for (let i = curIdx + 1; i < Math.min(siblings.length, curIdx + 3); i++) {
           const text = siblings[i].textContent?.trim() || '';
@@ -913,7 +930,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         // If the current line ends with a hyphen (like transac-), remove it and join directly
         let currentTextClean = currentLineElement.textContent || '';
         let nextTextCombined = linesAfter.join(' ');
-        
+
         // Handle PDF hyphenation: e.g. transac- + tion
         if (currentTextClean.endsWith('-') || currentTextClean.endsWith('‐')) {
           // Remove hyphen and connect directly with the first word of the next line
@@ -930,7 +947,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
             nextTextCombined = '';
           }
         }
-        
+
         fullText = [...linesBefore, currentTextClean, nextTextCombined].join(' ');
       }
     }
@@ -950,7 +967,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           }
         }
       }
-      
+
       let pEnd = fullText.length;
       for (let i = selIdx + selectedText.length; i < fullText.length; i++) {
         const char = fullText[i];
@@ -962,9 +979,9 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           }
         }
       }
-      
+
       let sentence = fullText.slice(pStart, pEnd).trim();
-      
+
       // Cleanup extra whitespace and double spaces
       sentence = sentence.replace(/\s+/g, ' ');
 
@@ -977,7 +994,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           return (start > 0 ? '...' : '') + sentence.slice(start, end).trim() + (end < sentence.length ? '...' : '');
         }
       }
-      
+
       return sentence;
     }
 
@@ -1042,11 +1059,11 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
 
   const fetchCardExplanation = async (entry: TranslationEntry) => {
     if (entry.explanation || entry.explainLoading) return;
-    
+
     setTranslations(prev =>
       prev.map(t => t.id === entry.id ? { ...t, explainLoading: true, explainError: '' } : t)
     );
-    
+
     try {
       const res = await fetchWithAuth('/api/v1/explain', {
         method: 'POST',
@@ -1070,7 +1087,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           try {
             const errJson = await res.json();
             if (errJson.message) errMsg = errJson.message;
-          } catch {}
+          } catch { }
         }
         throw new Error(errMsg);
       }
@@ -1186,13 +1203,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   // Date grouping for sidebar vocabularies
   const getGroupedVocabularies = () => {
     const groups: Record<string, any[]> = {};
-    
+
     bookVocab.forEach(v => {
       const date = new Date(v.created_at);
       const today = new Date();
       const yesterday = new Date();
       yesterday.setDate(today.getDate() - 1);
-      
+
       let dateKey = '';
       if (date.toDateString() === today.toDateString()) {
         dateKey = 'Today';
@@ -1205,13 +1222,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           year: 'numeric'
         });
       }
-      
+
       if (!groups[dateKey]) {
         groups[dateKey] = [];
       }
       groups[dateKey].push(v);
     });
-    
+
     return groups;
   };
 
@@ -1230,7 +1247,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     const escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
     const regex = new RegExp(`\\b(${escapedWord})\\b`, 'gi');
     const parts = sentence.split(regex);
-    return parts.map((part, index) => 
+    return parts.map((part, index) =>
       regex.test(part) || part.toLowerCase() === word.toLowerCase() ? (
         <span key={index} className="vocab-context-highlight">{part}</span>
       ) : part
@@ -1671,7 +1688,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                             </button>
                           </div>
                           <p className="sidebar-vocab-translated">{v.translated_text}</p>
-                          
+
                           {/* Context Sentence */}
                           {v.context_sentence && (
                             <div className="sidebar-vocab-context-box">
@@ -1705,7 +1722,6 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           <div className="rt-header">
             <button className="rt-btn rt-back-btn" onClick={() => setReadThroughActive(false)} title="Exit Kindle Mode">
               <ArrowLeft size={18} />
-              <span>Exit</span>
             </button>
             <div className="rt-book-title">{book.title}</div>
             <div className="rt-actions">
@@ -1791,12 +1807,12 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       {readThroughActive && (
         <div className={`rt-footer ${hudVisible ? 'visible' : 'hidden'}`}>
           <div className="rt-progress-bar-container">
-            <div 
-              className="rt-progress-bar" 
-              style={{ 
-                width: `${book.total_pages && currentPage ? (currentPage / book.total_pages) * 100 : 0}%` 
-              }} 
-              />
+            <div
+              className="rt-progress-bar"
+              style={{
+                width: `${book.total_pages && currentPage ? (currentPage / book.total_pages) * 100 : 0}%`
+              }}
+            />
           </div>
           <div className="rt-footer-meta">
             <span>{currentPage && book.total_pages ? `Page ${currentPage} of ${book.total_pages}` : book.file_type === 'epub' || book.file_type === 'md' ? 'Current Position' : ''}</span>
@@ -1808,15 +1824,15 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       {/* Page Turning Hover Buttons */}
       {readThroughActive && (
         <>
-          <button 
-            className="rt-nav-zone left" 
+          <button
+            className="rt-nav-zone left"
             onClick={() => window.dispatchEvent(new CustomEvent('readthrough-prev-page'))}
             title="Previous page (Left arrow)"
           >
             <ChevronLeft size={36} />
           </button>
-          <button 
-            className="rt-nav-zone right" 
+          <button
+            className="rt-nav-zone right"
             onClick={() => window.dispatchEvent(new CustomEvent('readthrough-next-page'))}
             title="Next page (Right arrow)"
           >

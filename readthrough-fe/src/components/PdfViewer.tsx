@@ -329,9 +329,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
             },
             getDestinationHash: () => '#',
             getAnchorUrl: () => '#',
-            setHash: () => {},
-            executeNamedAction: () => {},
-            onFileAttachmentAnnotation: () => {},
+            setHash: () => { },
+            executeNamedAction: () => { },
+            onFileAttachmentAnnotation: () => { },
           };
 
           const annotationLayer = new pdfjs.AnnotationLayer({
@@ -401,6 +401,11 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
           e.preventDefault();
           zoom(-0.15);
         }
+      } else if (e.key === 'Escape') {
+        setHighlight(null);
+        lastWordRef.current = '';
+        window.getSelection()?.removeAllRanges();
+        window.dispatchEvent(new CustomEvent('readthrough-escape-key'));
       } else {
         if (e.key === 'ArrowRight') {
           (document.activeElement as HTMLElement)?.blur();
@@ -417,6 +422,20 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [changePage, zoom]);
+
+  // Clear highlight box when clear selection event is received
+  useEffect(() => {
+    const handleClearSelection = () => {
+      setHighlight(null);
+      lastWordRef.current = '';
+      window.getSelection()?.removeAllRanges();
+    };
+
+    window.addEventListener('readthrough-clear-selection', handleClearSelection);
+    return () => {
+      window.removeEventListener('readthrough-clear-selection', handleClearSelection);
+    };
+  }, []);
 
   // Handle next/prev page events from BookReader
   useEffect(() => {
