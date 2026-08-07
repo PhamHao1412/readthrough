@@ -423,6 +423,54 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
     if (pdf) renderPage(pageNumber, scale);
   }, [pdf, pageNumber, scale, renderPage]);
 
+  // ── Preload pages in background (15 pages forward, 5 pages backward) ──
+  useEffect(() => {
+    if (!pdf || pageNumber <= 0) return;
+
+    const PRELOAD_FORWARD = 15;
+    const PRELOAD_BACKWARD = 5;
+    const maxPages = totalPages || pdf.numPages;
+
+    const startPage = Math.max(1, pageNumber - PRELOAD_BACKWARD);
+    const endPage = Math.min(maxPages, pageNumber + PRELOAD_FORWARD);
+
+    let isCancelled = false;
+
+    const preloadPages = async () => {
+      // 1. Preload forward pages first (most likely direction)
+      for (let i = pageNumber + 1; i <= endPage; i++) {
+        if (isCancelled) break;
+        try {
+          const page = await pdf.getPage(i);
+          if (!isCancelled && page) {
+            await page.getTextContent().catch(() => {});
+          }
+        } catch {}
+      }
+
+      // 2. Preload backward pages
+      for (let i = pageNumber - 1; i >= startPage; i--) {
+        if (isCancelled) break;
+        try {
+          const page = await pdf.getPage(i);
+          if (!isCancelled && page) {
+            await page.getTextContent().catch(() => {});
+          }
+        } catch {}
+      }
+    };
+
+    // Delay background preloading slightly (150ms) so current page render takes priority
+    const timer = setTimeout(() => {
+      preloadPages();
+    }, 150);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [pdf, pageNumber, totalPages]);
+
   // ── Page navigation ────────────────────────────────────────────
   const changePage = useCallback((offset: number) => {
     const next = pageNumber + offset;

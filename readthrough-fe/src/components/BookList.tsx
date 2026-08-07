@@ -60,7 +60,7 @@ export const BookList: React.FC<BookListProps> = ({
     const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
-      // ── Step 1: Request presigned URL & create book record in DB (instant) ─
+      // Request presigned URL & create book record in DB
       const presignRes = await fetch('/api/v1/books/presign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -85,7 +85,7 @@ export const BookList: React.FC<BookListProps> = ({
       onUploadSuccess();
 
       if (isPresigned && uploadUrl) {
-        // ── Step 2: Background upload to R2 (non-blocking) ─────────────────
+        // Background upload to R2
         setLocalProgress(prev => ({ ...prev, [book.id]: 0 }));
 
         const xhr = new XMLHttpRequest();
@@ -99,7 +99,7 @@ export const BookList: React.FC<BookListProps> = ({
         xhr.onload = async () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
-              // ── Step 3: Tell server upload is done ──────────────────────────
+              // Finalize upload on server
               const finalizeRes = await fetch(`/api/v1/books/${book.id}/finalize`, {
                 method: 'POST',
                 headers: authHeaders,

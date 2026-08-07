@@ -70,7 +70,7 @@ func (s *BookService) UploadBookAsync(ctx context.Context, userID uuid.UUID, fil
 	cleanExt := strings.TrimPrefix(fileExt, ".")
 	fileName := bookID.String() + fileExt
 
-	// ── 1. Buffer to a local temp file (fast — avoids blocking on network) ───
+	// Buffer to a local temp file
 	src, err := fileHeader.Open()
 	if err != nil {
 		return nil, fmt.Errorf("open upload: %w", err)
@@ -90,7 +90,7 @@ func (s *BookService) UploadBookAsync(ctx context.Context, userID uuid.UUID, fil
 	}
 	tmpFile.Close()
 
-	// ── 2. Build book record ─────────────────────────────────────────────────
+	// Build book record
 	if title == "" {
 		title = fileHeader.Filename
 		if idx := strings.LastIndex(title, "."); idx != -1 {
@@ -119,13 +119,13 @@ func (s *BookService) UploadBookAsync(ctx context.Context, userID uuid.UUID, fil
 		UploadProgress: 0,
 	}
 
-	// ── 3. Insert book immediately ───────────────────────────────────────────
+	// Insert book record immediately
 	if err := s.bookRepo.Create(ctx, book); err != nil {
 		os.Remove(tmpPath)
 		return nil, fmt.Errorf("create book record: %w", err)
 	}
 
-	// ── 4. Background goroutine: upload to cloud, update progress ────────────
+	// Background upload to cloud storage
 	go s.runUpload(bookID, tmpPath, fileName, fileHeader.Size, contentType)
 
 	return book, nil
