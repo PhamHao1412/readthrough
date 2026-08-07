@@ -19,7 +19,16 @@ import (
 type IBookService interface {
 	// UploadBookAsync saves the file locally, inserts the book with status "uploading",
 	// returns immediately (202), and uploads to cloud storage in a background goroutine.
+	// Used as fallback when presigned PUT is not supported (e.g. local storage).
 	UploadBookAsync(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader, title, author string) (*entity.Book, error)
+	// PresignUpload creates a book record (status "uploading") and returns a
+	// presigned PUT URL for the browser to upload directly to cloud storage.
+	// Returns (book, uploadURL, isPresigned, error). When isPresigned=false,
+	// the caller should fall back to the normal multipart upload.
+	PresignUpload(ctx context.Context, userID uuid.UUID, filename string, fileSize int64, contentType, title, author string) (*entity.Book, string, bool, error)
+	// FinalizeUpload marks a book as ready after the client confirms the direct
+	// upload to R2 has completed successfully.
+	FinalizeUpload(ctx context.Context, bookID uuid.UUID, userID uuid.UUID) (*entity.Book, error)
 	// GetUploadProgress returns the current upload progress (0-100) for a book.
 	GetUploadProgress(bookID uuid.UUID) int
 	// CleanupOrphanedUploads marks books stuck in "uploading" as "failed".
@@ -163,6 +172,73 @@ func (s *BookService) runUpload(bookID uuid.UUID, tmpPath, storageKey string, si
 // GetUploadProgress returns the live upload progress (0-100) from in-memory tracker.
 func (s *BookService) GetUploadProgress(bookID uuid.UUID) int {
 	return GlobalUploadTracker.Get(bookID)
+}
+
+// PresignUpload creates a book DB record with status="uploading" and returns a
+// presigned PUT URL the browser can use to upload directly to R2 (no server proxy).
+// When the storage backend does not support presigned PUT (e.g. local), isPresigned
+// is false and the caller should fall back to the normal multipart upload.
+func (s *BookService) PresignUpload(
+	ctx context.Context,
+	userID uuid.UUID,
+	filename string,
+	fileSize int64,
+	contentType string,
+	title string,
+	author string,
+) (*entity.Book, string, bool, error) {
+	bookID := uuid.New()
+	fileExt := strings.ToLower(filepath.Ext(filename))
+	cleanExt := strings.TrimPrefix(fileExt, ".")
+	storageKey := bookID.String() + fileExt
+
+	if title == "" {
+		title = filename
+		if idx := strings.LastIndex(title, "."); idx != -1 {
+			title = title[:idx]
+		}
+	}
+	if author == "" {
+		author = "Anonymous Author"
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	// Try to get a presigned PUT URL from the storage backend.
+	uploadURL, isPresigned, err := s.store.PresignPutObject(ctx, storageKey, contentType)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("presign put: %w", err)
+	}
+
+	book := &entity.Book{
+		BaseEntity:     entity.BaseEntity{ID: bookID},
+		UserID:         userID,
+		Title:          title,
+		Author:         author,
+		FilePath:       storageKey,
+		FileType:       cleanExt,
+		FileSize:       fileSize,
+		CurrentPage:    1,
+		UploadStatus:   "uploading",
+		UploadProgress: 0,
+	}
+
+	if err := s.bookRepo.Create(ctx, book); err != nil {
+		return nil, "", false, fmt.Errorf("create book record: %w", err)
+	}
+
+	return book, uploadURL, isPresigned, nil
+}
+
+// FinalizeUpload marks a book as ready after the browser confirms the direct
+// R2 upload has completed. Returns the updated book.
+func (s *BookService) FinalizeUpload(ctx context.Context, bookID uuid.UUID, userID uuid.UUID) (*entity.Book, error) {
+	if err := s.bookRepo.UpdateUploadStatus(ctx, bookID, "ready", 100); err != nil {
+		return nil, fmt.Errorf("finalize upload: %w", err)
+	}
+	log.Printf("[Upload] book %s finalized (direct R2 upload confirmed)", bookID)
+	return s.bookRepo.GetByID(ctx, bookID, userID)
 }
 
 // CleanupOrphanedUploads marks books stuck in "uploading" as "failed".

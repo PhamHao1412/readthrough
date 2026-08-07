@@ -56,6 +56,8 @@ func V1Router(
 		books := api.Group("/books", middleware.AuthMiddleware())
 		{
 			books.POST("/upload", bookHandler.Upload)
+			books.POST("/presign", bookHandler.PresignUpload)       // step 1: get presigned PUT URL
+			books.POST("/:id/finalize", bookHandler.FinalizeUpload) // step 3: confirm upload done
 			books.GET("", bookHandler.List)
 			books.GET("/:id", bookHandler.GetByID)
 			books.GET("/:id/content", bookHandler.GetContent)

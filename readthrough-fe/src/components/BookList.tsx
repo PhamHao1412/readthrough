@@ -24,6 +24,8 @@ export const BookList: React.FC<BookListProps> = ({
   const [isPasteModalOpen, setIsPasteModalOpen] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [localProgress, setLocalProgress] = useState<Record<string, number>>({});
+
   // ── Polling for uploading books ────────────────────────────────────────────
   // When any book has upload_status="uploading", poll its status every 2s
   // so the UI reflects progress without a full page reload.
@@ -32,8 +34,6 @@ export const BookList: React.FC<BookListProps> = ({
   const pollUploadingBooks = useCallback(async () => {
     const uploadingBooks = books.filter(b => b.upload_status === 'uploading');
     if (uploadingBooks.length === 0) return;
-    // Refresh the full list to pick up any status changes.
-    // onUploadSuccess triggers a re-fetch in the parent component.
     onUploadSuccess();
   }, [books, onUploadSuccess]);
 
@@ -52,53 +52,108 @@ export const BookList: React.FC<BookListProps> = ({
       return;
     }
 
-    setUploading(true);
-    setUploadProgress(0);
     setError('');
     setSuccess('');
 
-    const formData = new FormData();
-    formData.append('file', file);
     const titleWithoutExt = file.name.substring(0, file.name.lastIndexOf('.'));
-    formData.append('title', titleWithoutExt);
-    formData.append('author', 'Anonymous Author');
+    const token = localStorage.getItem('readthrough_access_token');
+    const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
-      const xhr = new XMLHttpRequest();
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable) {
-          setUploadProgress(Math.round((event.loaded / event.total) * 100));
-        }
+      // ── Step 1: Request presigned URL & create book record in DB (instant) ─
+      const presignRes = await fetch('/api/v1/books/presign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          filename: file.name,
+          file_size: file.size,
+          content_type: file.type || 'application/octet-stream',
+          title: titleWithoutExt,
+          author: 'Anonymous Author',
+        }),
       });
 
-      const uploadPromise = new Promise<void>((resolve, reject) => {
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            let msg = 'Upload failed.';
-            try { msg = JSON.parse(xhr.responseText).message || msg; } catch { }
-            reject(new Error(msg));
-          }
-        };
-        xhr.onerror = () => reject(new Error('Server connection error.'));
-      });
-
-      xhr.open('POST', '/api/v1/books/upload');
-      const token = localStorage.getItem('readthrough_access_token');
-      if (token) {
-        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      if (!presignRes.ok) {
+        const data = await presignRes.json().catch(() => ({}));
+        throw new Error(data.message || 'Failed to initiate upload.');
       }
-      xhr.send(formData);
-      await uploadPromise;
 
-      setSuccess(`Successfully uploaded "${titleWithoutExt}"`);
+      const presignData = await presignRes.json();
+      const { book, upload_url: uploadUrl, is_presigned: isPresigned } = presignData.data;
+
+      // Immediately refresh the book list so the card appears with "Processing..." status
       onUploadSuccess();
-      setTimeout(() => setSuccess(''), 4000);
+
+      if (isPresigned && uploadUrl) {
+        // ── Step 2: Background upload to R2 (non-blocking) ─────────────────
+        setLocalProgress(prev => ({ ...prev, [book.id]: 0 }));
+
+        const xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const pct = Math.round((event.loaded / event.total) * 100);
+            setLocalProgress(prev => ({ ...prev, [book.id]: pct }));
+          }
+        });
+
+        xhr.onload = async () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              // ── Step 3: Tell server upload is done ──────────────────────────
+              const finalizeRes = await fetch(`/api/v1/books/${book.id}/finalize`, {
+                method: 'POST',
+                headers: authHeaders,
+              });
+              if (finalizeRes.ok) {
+                onUploadSuccess();
+                setSuccess(`Successfully uploaded "${titleWithoutExt}"`);
+                setTimeout(() => setSuccess(''), 4000);
+              } else {
+                setError(`Failed to finalize "${titleWithoutExt}".`);
+              }
+            } catch (err: any) {
+              setError(`Finalize error for "${titleWithoutExt}".`);
+            }
+          } else {
+            setError(`R2 upload failed (${xhr.status}).`);
+          }
+          setLocalProgress(prev => {
+            const next = { ...prev };
+            delete next[book.id];
+            return next;
+          });
+        };
+
+        xhr.onerror = () => {
+          setError(`Network error uploading "${titleWithoutExt}".`);
+          setLocalProgress(prev => {
+            const next = { ...prev };
+            delete next[book.id];
+            return next;
+          });
+        };
+
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.send(file);
+
+      } else {
+        // ── Fallback: Local storage multipart upload (background) ────────────
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('title', titleWithoutExt);
+        formData.append('author', 'Anonymous Author');
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/v1/books/upload');
+        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.onload = () => {
+          onUploadSuccess();
+        };
+        xhr.send(formData);
+      }
     } catch (err: any) {
       setError(err.message || 'An error occurred during upload.');
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -264,7 +319,7 @@ export const BookList: React.FC<BookListProps> = ({
           {filteredBooks.map((book) => {
             const isUploading = book.upload_status === 'uploading';
             const isFailed   = book.upload_status === 'failed';
-            const cloudPct   = book.upload_progress ?? 0;
+            const cloudPct   = localProgress[book.id] ?? (book.upload_progress ?? 0);
             const progressPercent = book.total_pages > 0 && book.file_type !== 'md'
               ? Math.round((book.current_page / book.total_pages) * 100)
               : (book.epub_cfi || book.file_type === 'md') ? 50 : 0;

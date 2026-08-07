@@ -50,3 +50,14 @@ type RefreshRequest struct {
 type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
+
+// PresignUploadRequest is the JSON body for POST /books/presign.
+// The server creates a book record and returns a presigned PUT URL for the
+// browser to upload the file directly to R2.
+type PresignUploadRequest struct {
+	Filename    string `json:"filename"     binding:"required"`
+	FileSize    int64  `json:"file_size"    binding:"required,min=1"`
+	ContentType string `json:"content_type"`
+	Title       string `json:"title"`
+	Author      string `json:"author"`
+}

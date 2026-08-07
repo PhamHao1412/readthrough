@@ -16,6 +16,10 @@ type Storage interface {
 	DownloadRange(ctx context.Context, key string, rangeHeader string) (io.ReadCloser, string, int64, string, int, error)
 	Delete(ctx context.Context, key string) error
 	GetPresignedURL(ctx context.Context, key string) (string, bool, error)
+	// PresignPutObject generates a presigned PUT URL so the browser can upload
+	// directly to cloud storage (bypassing the server). Returns ("", false, nil)
+	// for local storage which does not support presigned PUT.
+	PresignPutObject(ctx context.Context, key string, contentType string) (url string, supported bool, err error)
 	// GetLocalPath returns the absolute filesystem path for the given key.
 	// Returns ("", false, nil) if the storage backend is not local (e.g. R2/S3).
 	GetLocalPath(ctx context.Context, key string) (path string, ok bool, err error)

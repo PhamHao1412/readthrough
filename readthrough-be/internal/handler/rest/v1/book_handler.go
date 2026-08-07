@@ -48,6 +48,67 @@ func (h *BookHandler) Upload(c *gin.Context) {
 	c.JSON(http.StatusAccepted, dto.ResponseOK(book).WithMessage("Upload started. The document will be ready shortly."))
 }
 
+// PresignUpload creates a book record and returns a pre-signed PUT URL for the
+// browser to upload the file directly to R2, bypassing the server entirely.
+// When the storage backend does not support presigned PUT (local dev), is_presigned
+// is false and the client should fall back to the normal multipart upload.
+func (h *BookHandler) PresignUpload(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, dto.ResponseUnauthorized(nil))
+		return
+	}
+	userID := userIDVal.(uuid.UUID)
+
+	var req model.PresignUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ResponseBadRequest(err))
+		return
+	}
+
+	book, uploadURL, isPresigned, err := h.bookSvc.PresignUpload(
+		c.Request.Context(), userID,
+		req.Filename, req.FileSize, req.ContentType,
+		req.Title, req.Author,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.ResponseOK(gin.H{
+		"book":         book,
+		"upload_url":   uploadURL,
+		"is_presigned": isPresigned,
+	}))
+}
+
+// FinalizeUpload marks a book as ready after the browser has successfully PUT
+// the file to R2 via the presigned URL.
+func (h *BookHandler) FinalizeUpload(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, dto.ResponseUnauthorized(nil))
+		return
+	}
+	userID := userIDVal.(uuid.UUID)
+
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ResponseBadRequest(err))
+		return
+	}
+
+	book, err := h.bookSvc.FinalizeUpload(c.Request.Context(), id, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.ResponseOK(book).WithMessage("Document is ready."))
+}
+
 func (h *BookHandler) List(c *gin.Context) {
 	userIDVal, exists := c.Get("userID")
 	if !exists {

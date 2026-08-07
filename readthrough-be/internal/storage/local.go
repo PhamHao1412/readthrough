@@ -78,6 +78,12 @@ func (s *LocalStorage) GetPresignedURL(ctx context.Context, key string) (string,
 	return "", false, nil
 }
 
+// PresignPutObject returns ("", false, nil) — local storage does not support
+// presigned PUT. The caller should fall back to the normal multipart upload path.
+func (s *LocalStorage) PresignPutObject(ctx context.Context, key string, contentType string) (string, bool, error) {
+	return "", false, nil
+}
+
 // GetLocalPath returns the absolute path of the stored file, allowing callers to use
 // http.ServeContent for proper HTTP Range / 206 Partial Content support.
 func (s *LocalStorage) GetLocalPath(ctx context.Context, key string) (string, bool, error) {

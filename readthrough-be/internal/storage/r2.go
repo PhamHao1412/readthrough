@@ -128,12 +128,30 @@ func (s *R2Storage) Delete(ctx context.Context, key string) error {
 	return err
 }
 
-// GetPresignedURL generates a pre-signed URL from Cloudflare R2 valid for 15 minutes.
+// GetPresignedURL generates a pre-signed GET URL from Cloudflare R2 valid for 15 minutes.
 func (s *R2Storage) GetPresignedURL(ctx context.Context, key string) (string, bool, error) {
 	presignClient := s3.NewPresignClient(s.client)
 	req, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucketName),
 		Key:    aws.String(key),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = 15 * time.Minute
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return req.URL, true, nil
+}
+
+// PresignPutObject generates a pre-signed PUT URL valid for 15 minutes.
+// The browser uses this URL to upload the file directly to R2, bypassing the
+// server and avoiding proxy timeout issues for large files.
+func (s *R2Storage) PresignPutObject(ctx context.Context, key string, contentType string) (string, bool, error) {
+	presignClient := s3.NewPresignClient(s.client)
+	req, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucketName),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
 	}, func(opts *s3.PresignOptions) {
 		opts.Expires = 15 * time.Minute
 	})
