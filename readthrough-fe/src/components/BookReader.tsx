@@ -5,6 +5,7 @@ import { EpubViewer } from './EpubViewer';
 import { TxtViewer } from './TxtViewer';
 import { MdViewer } from './MdViewer';
 import { TranslationTooltip } from './TranslationTooltip';
+import { TranslationBottomSheet } from './TranslationBottomSheet';
 import { useAuth } from '../context/AuthContext';
 
 
@@ -17,6 +18,10 @@ export interface Book {
   current_page: number;
   epub_cfi: string;
   total_pages: number;
+  /** Async upload state: "uploading" | "ready" | "failed" */
+  upload_status?: string;
+  /** Upload progress 0-100, valid while upload_status === "uploading" */
+  upload_progress?: number;
 }
 
 interface TranslationEntry {
@@ -157,13 +162,16 @@ const AutoScrollContainer: React.FC<AutoScrollContainerProps> = ({ content, rend
 interface BookReaderProps {
   book: Book;
   onBack: () => void;
-  theme: 'light' | 'dark' | 'sepia';
+  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
   onThemeChange: () => void;
 }
 
 export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onThemeChange }) => {
   const { fetchWithAuth } = useAuth();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  // For PDF: we pass the direct URL to PdfViewer so PDF.js can do Range requests.
+  // For other types: we use blobUrl (full download into memory).
+  const [directPdfUrl, setDirectPdfUrl] = useState<string | null>(null);
   const [loadingContent, setLoadingContent] = useState<boolean>(true);
   const [contentError, setContentError] = useState<string>('');
 
@@ -553,7 +561,9 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   }, []);
 
   const renderOutlineItems = (items: any[], depth = 0, path = ''): React.ReactNode => {
-    return items.map((item, idx) => {
+    return items
+      .filter(item => (item.title ?? '').trim() !== '') // skip blank-title entries
+      .map((item, idx) => {
       const itemPath = path ? `${path}-${idx}` : `${idx}`;
       const hasChildren = item.children && item.children.length > 0;
       const isExpanded = !!expandedItems[itemPath];
@@ -616,27 +626,36 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       setContentError('');
       let isPresigned = false;
       try {
+        // ── PDF: skip blob, use direct URL for Range-based streaming ──────────
+        // PDF.js supports HTTP Range requests natively, so we just give it the
+        // URL and let it fetch only the bytes it needs per page.
+        if (book.file_type === 'pdf') {
+          // Always use the authenticated /content endpoint for PDFs.
+          // The backend proxies Range requests (HTTP 206) to R2, so PDF.js
+          // can fetch only the bytes it needs per page — no full download.
+          if (active) {
+            setDirectPdfUrl(`/api/v1/books/${book.id}/content`);
+          }
+          return;
+        }
+
+        // ── Non-PDF: use Cache API + full blob download (existing behaviour) ──
         const cacheName = 'readthrough-book-cache';
         const cacheKey = `/books/${book.id}/content`;
         const cache = await caches.open(cacheName);
         const cachedResponse = await cache.match(cacheKey);
 
         if (cachedResponse) {
-          const blob = await cachedResponse.blob();
-          if (!active) return;
-
-          const text = await blob.text();
-          console.log("[BookReaderDebug] Cached Book length:", text.length);
-          console.log("[BookReaderDebug] Contains WhatsApp:", text.toLowerCase().includes("whatsapp"));
-          console.log("[BookReaderDebug] Contains Netflix:", text.toLowerCase().includes("netflix"));
-          console.log("[BookReaderDebug] Contains Twitter:", text.toLowerCase().includes("twitter"));
-          console.log("[BookReaderDebug] End of book text:", text.substring(Math.max(0, text.length - 1000)));
-
-          localBlobUrl = URL.createObjectURL(blob);
-          setBlobUrl(localBlobUrl);
-          setLoadingContent(false);
-          console.log('[Cache] Loaded book instantly from local cache');
-          return;
+          const rawBlob = await cachedResponse.blob();
+          if (active && rawBlob.size > 0) {
+            const mimeType = book.file_type === 'epub' ? 'application/epub+zip' : book.file_type === 'pdf' ? 'application/pdf' : 'text/plain';
+            const typedBlob = new Blob([rawBlob], { type: mimeType });
+            localBlobUrl = URL.createObjectURL(typedBlob);
+            setBlobUrl(localBlobUrl);
+            setLoadingContent(false);
+            console.log('[Cache] Loaded book instantly from local cache');
+            return;
+          }
         }
 
         // 1. Get the download URL (either R2 pre-signed or backend local path)
@@ -663,14 +682,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
 
         // Clone the response to store it in cache and get the blob for current render
         const fileResClone = fileRes.clone();
-        const blob = await fileRes.blob();
-
-        const text = await blob.text();
-        console.log("[BookReaderDebug] Fetched Book length:", text.length);
-        console.log("[BookReaderDebug] Contains WhatsApp:", text.toLowerCase().includes("whatsapp"));
-        console.log("[BookReaderDebug] Contains Netflix:", text.toLowerCase().includes("netflix"));
-        console.log("[BookReaderDebug] Contains Twitter:", text.toLowerCase().includes("twitter"));
-        console.log("[BookReaderDebug] End of book text:", text.substring(Math.max(0, text.length - 1000)));
+        const rawBlob = await fileRes.blob();
 
         try {
           await cache.put(cacheKey, fileResClone);
@@ -680,7 +692,9 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         }
 
         if (!active) return;
-        localBlobUrl = URL.createObjectURL(blob);
+        const mimeType = book.file_type === 'epub' ? 'application/epub+zip' : book.file_type === 'pdf' ? 'application/pdf' : 'text/plain';
+        const typedBlob = new Blob([rawBlob], { type: mimeType });
+        localBlobUrl = URL.createObjectURL(typedBlob);
         setBlobUrl(localBlobUrl);
       } catch (err: any) {
         if (active) setContentError(err.message || 'Error loading book.');
@@ -697,7 +711,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         URL.revokeObjectURL(localBlobUrl);
       }
     };
-  }, [book.id, fetchWithAuth]);
+  }, [book.id, book.file_type, fetchWithAuth]);
 
   const [translations, setTranslations] = useState<TranslationEntry[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -1254,7 +1268,12 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     );
   };
 
-  const contentUrl = blobUrl || '';
+  // PDF gets the direct URL so PDF.js can Range-fetch page by page.
+  // All other types use the full blob URL.
+  const contentUrl = book.file_type === 'pdf'
+    ? (directPdfUrl || '')
+    : (blobUrl || '');
+
 
   return (
     <div className={`reader-shell ${readThroughActive ? 'rt-active' : ''}`}>
@@ -1374,6 +1393,12 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
                   onSelection={handleSelection}
                   onOutlineLoaded={handleOutlineLoaded}
                   readThroughActive={readThroughActive}
+                  rtSettings={{
+                    fontFamily: rtFontFamily,
+                    fontSizeLevel: rtFontSizeLevel,
+                    margin: rtMargin,
+                    lineHeight: rtLineHeight
+                  }}
                 />
               )}
               {book.file_type === 'epub' && (
@@ -1731,10 +1756,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
               <button className={`rt-btn ${showRtSettings ? 'active' : ''}`} onClick={() => { setShowRtSettings(!showRtSettings); setShowRtToc(false); }} title="Text settings">
                 <Settings size={18} />
               </button>
-              <button className="rt-btn" onClick={onThemeChange} title="Change background theme">
+              <button className="rt-btn" onClick={onThemeChange} title={`Theme: ${theme}`}>
                 {theme === 'light' && <Moon size={18} />}
                 {theme === 'dark' && <Coffee size={18} />}
                 {theme === 'sepia' && <Sun size={18} />}
+                {theme === 'oled' && <Moon size={18} style={{ color: '#f97316' }} />}
+                {theme === 'mint' && <Sun size={18} style={{ color: '#52b788' }} />}
+                {theme === 'eink' && <BookOpen size={18} />}
               </button>
             </div>
           </div>
@@ -1841,18 +1869,29 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         </>
       )}
 
-      {/* Selection Tooltip */}
+      {/* Selection Tooltip / Mobile Bottom Sheet */}
       {readThroughActive && activeSelection && (
-        <TranslationTooltip
-          text={activeSelection.text}
-          x={activeSelection.x}
-          y={activeSelection.y}
-          onClose={() => setActiveSelection(null)}
-          contextSentence={getSentenceContext(activeSelection.text)}
-          bookTitle={book.title}
-          bookAuthor={book.author}
-          pageNumber={currentPage}
-        />
+        window.innerWidth <= 768 ? (
+          <TranslationBottomSheet
+            text={activeSelection.text}
+            onClose={() => setActiveSelection(null)}
+            contextSentence={getSentenceContext(activeSelection.text)}
+            bookTitle={book.title}
+            bookAuthor={book.author}
+            pageNumber={currentPage}
+          />
+        ) : (
+          <TranslationTooltip
+            text={activeSelection.text}
+            x={activeSelection.x}
+            y={activeSelection.y}
+            onClose={() => setActiveSelection(null)}
+            contextSentence={getSentenceContext(activeSelection.text)}
+            bookTitle={book.title}
+            bookAuthor={book.author}
+            pageNumber={currentPage}
+          />
+        )
       )}
     </div>
   );

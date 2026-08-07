@@ -15,6 +15,11 @@ type IBookRepository interface {
 	Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error
 	UpdateSize(ctx context.Context, id uuid.UUID, userID uuid.UUID, size int64) error
+	// UpdateUploadStatus sets upload_status and upload_progress on a book record.
+	UpdateUploadStatus(ctx context.Context, id uuid.UUID, status string, progress int) error
+	// MarkOrphanedUploadsFailed marks any book stuck in "uploading" status as "failed".
+	// Called on server startup to clean up uploads that were interrupted by a restart.
+	MarkOrphanedUploadsFailed(ctx context.Context) error
 }
 
 type BookRepository struct {
@@ -68,4 +73,22 @@ func (r *BookRepository) UpdateProgress(ctx context.Context, id uuid.UUID, userI
 
 func (r *BookRepository) UpdateSize(ctx context.Context, id uuid.UUID, userID uuid.UUID, size int64) error {
 	return r.db.WithContext(ctx).Model(&entity.Book{}).Where("id = ? AND user_id = ?", id, userID).Update("file_size", size).Error
+}
+
+func (r *BookRepository) UpdateUploadStatus(ctx context.Context, id uuid.UUID, status string, progress int) error {
+	return r.db.WithContext(ctx).Model(&entity.Book{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"upload_status":   status,
+			"upload_progress": progress,
+		}).Error
+}
+
+func (r *BookRepository) MarkOrphanedUploadsFailed(ctx context.Context) error {
+	return r.db.WithContext(ctx).Model(&entity.Book{}).
+		Where("upload_status = ?", "uploading").
+		Updates(map[string]interface{}{
+			"upload_status":   "failed",
+			"upload_progress": 0,
+		}).Error
 }

@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { UploadCloud, Search, BookOpen, FileText, FileDown, Plus, AlertCircle, CheckCircle, Loader2, Trash2, Sparkles } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { UploadCloud, Search, BookOpen, FileText, FileDown, Plus, AlertCircle, CheckCircle, Loader2, Trash2, Sparkles, X } from 'lucide-react';
 import { Book } from './BookReader';
 import { PasteMarkdownModal } from './PasteMarkdownModal';
 
@@ -23,6 +23,26 @@ export const BookList: React.FC<BookListProps> = ({
   const [success, setSuccess] = useState<string>('');
   const [isPasteModalOpen, setIsPasteModalOpen] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Polling for uploading books ────────────────────────────────────────────
+  // When any book has upload_status="uploading", poll its status every 2s
+  // so the UI reflects progress without a full page reload.
+  const hasUploading = books.some(b => b.upload_status === 'uploading');
+
+  const pollUploadingBooks = useCallback(async () => {
+    const uploadingBooks = books.filter(b => b.upload_status === 'uploading');
+    if (uploadingBooks.length === 0) return;
+    // Refresh the full list to pick up any status changes.
+    // onUploadSuccess triggers a re-fetch in the parent component.
+    onUploadSuccess();
+  }, [books, onUploadSuccess]);
+
+  useEffect(() => {
+    if (!hasUploading) return;
+    const timer = setInterval(pollUploadingBooks, 2000);
+    return () => clearInterval(timer);
+  }, [hasUploading, pollUploadingBooks]);
+  // ──────────────────────────────────────────────────────────────────────────
 
   const handleUpload = async (file: File) => {
     if (!file) return;
@@ -242,6 +262,9 @@ export const BookList: React.FC<BookListProps> = ({
       ) : (
         <div className="books-grid">
           {filteredBooks.map((book) => {
+            const isUploading = book.upload_status === 'uploading';
+            const isFailed   = book.upload_status === 'failed';
+            const cloudPct   = book.upload_progress ?? 0;
             const progressPercent = book.total_pages > 0 && book.file_type !== 'md'
               ? Math.round((book.current_page / book.total_pages) * 100)
               : (book.epub_cfi || book.file_type === 'md') ? 50 : 0;
@@ -249,8 +272,9 @@ export const BookList: React.FC<BookListProps> = ({
             return (
               <div
                 key={book.id}
-                className={`book-card type-${book.file_type}`}
-                onClick={() => onSelectBook(book)}
+                className={`book-card type-${book.file_type}${isUploading ? ' book-card--uploading' : ''}${isFailed ? ' book-card--failed' : ''}`}
+                onClick={() => !isUploading && !isFailed && onSelectBook(book)}
+                style={{ cursor: isUploading || isFailed ? 'default' : 'pointer' }}
               >
                 <button
                   className="delete-book-btn"
@@ -264,7 +288,11 @@ export const BookList: React.FC<BookListProps> = ({
                 </button>
                 <div className="book-card-top">
                   <div className={`book-type-icon ${book.file_type}`}>
-                    {book.file_type === 'pdf' ? (
+                    {isUploading ? (
+                      <UploadCloud size={22} style={{ animation: 'pulse 1.5s ease-in-out infinite' }} />
+                    ) : isFailed ? (
+                      <X size={22} />
+                    ) : book.file_type === 'pdf' ? (
                       <FileDown size={22} />
                     ) : book.file_type === 'epub' ? (
                       <BookOpen size={22} />
@@ -284,18 +312,31 @@ export const BookList: React.FC<BookListProps> = ({
                   <div className="book-meta">
                     <span>{book.file_type.toUpperCase()} • {formatSize(book.file_size)}</span>
                     <span>
-                      {book.total_pages > 0 && book.file_type !== 'epub' && book.file_type !== 'md'
-                        ? `Page ${book.current_page}/${book.total_pages}`
-                        : book.file_type === 'epub' || book.file_type === 'md'
-                          ? book.file_type.toUpperCase()
-                          : 'Unread'}
+                      {isUploading
+                        ? `Processing... ${cloudPct}%`
+                        : isFailed
+                          ? 'Upload failed'
+                          : book.total_pages > 0 && book.file_type !== 'epub' && book.file_type !== 'md'
+                            ? `Page ${book.current_page}/${book.total_pages}`
+                            : book.file_type === 'epub' || book.file_type === 'md'
+                              ? book.file_type.toUpperCase()
+                              : 'Unread'}
                     </span>
                   </div>
                   <div className="progress-track">
-                    <div
-                      className={`progress-fill ${book.file_type}`}
-                      style={{ width: `${progressPercent}%` }}
-                    />
+                    {isUploading ? (
+                      <div
+                        className="progress-fill upload-progress-fill"
+                        style={{ width: `${cloudPct}%`, transition: 'width 0.4s ease' }}
+                      />
+                    ) : isFailed ? (
+                      <div className="progress-fill failed-progress-fill" style={{ width: '100%' }} />
+                    ) : (
+                      <div
+                        className={`progress-fill ${book.file_type}`}
+                        style={{ width: `${progressPercent}%` }}
+                      />
+                    )}
                   </div>
                 </div>
               </div>

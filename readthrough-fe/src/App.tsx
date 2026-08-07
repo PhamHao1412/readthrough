@@ -4,6 +4,8 @@ import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, L
 import { BookList } from './components/BookList';
 import { BookReader, Book } from './components/BookReader';
 import { VocabularyManager } from './components/VocabularyManager';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { ReadingStatsView } from './components/ReadingStatsView';
 import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
 
@@ -45,7 +47,7 @@ const PublicRoute = () => {
 
 // ── Main Header & Tab Navigation Layout ──
 interface MainLayoutProps {
-  theme: 'light' | 'dark' | 'sepia';
+  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
   onThemeChange: () => void;
   booksCount: number;
 }
@@ -129,13 +131,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ theme, onThemeChange, booksCoun
 
         <Outlet />
       </div>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav booksCount={booksCount} />
     </div>
   );
 };
 
 // ── Wrapper to Fetch Book Details by ID from URL ──
 interface BookReaderWrapperProps {
-  theme: 'light' | 'dark' | 'sepia';
+  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
   onThemeChange: () => void;
 }
 
@@ -217,12 +222,12 @@ function App() {
   const { isAuthenticated, loading: authLoading, fetchWithAuth } = useAuth();
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [theme, setTheme] = useState<'light' | 'dark' | 'sepia'>('dark');
+  const [theme, setTheme] = useState<'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink'>('dark');
   const navigate = useNavigate();
 
   // Load Theme
   useEffect(() => {
-    const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | 'sepia' | null;
+    const savedTheme = localStorage.getItem('theme') as any;
     const currentTheme = savedTheme || 'dark';
     setTheme(currentTheme);
     document.documentElement.setAttribute('data-theme', currentTheme);
@@ -253,10 +258,13 @@ function App() {
   }, [isAuthenticated]);
 
   const toggleTheme = () => {
-    let nextTheme: 'light' | 'dark' | 'sepia' = 'light';
+    let nextTheme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink' = 'light';
     if (theme === 'light') nextTheme = 'dark';
     else if (theme === 'dark') nextTheme = 'sepia';
-    else if (theme === 'sepia') nextTheme = 'light';
+    else if (theme === 'sepia') nextTheme = 'oled';
+    else if (theme === 'oled') nextTheme = 'mint';
+    else if (theme === 'mint') nextTheme = 'eink';
+    else if (theme === 'eink') nextTheme = 'light';
 
     setTheme(nextTheme);
     document.documentElement.setAttribute('data-theme', nextTheme);
@@ -330,6 +338,10 @@ function App() {
                 onSelectBook={(book) => navigate(`/books/${book.id}`)}
               />
             }
+          />
+          <Route
+            path="/stats"
+            element={<ReadingStatsView />}
           />
         </Route>
 

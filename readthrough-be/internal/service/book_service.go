@@ -1,11 +1,12 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
+	"os"
 	"path/filepath"
 	"readthrough-be/internal/entity"
 	"readthrough-be/internal/repository"
@@ -16,11 +17,22 @@ import (
 )
 
 type IBookService interface {
-	UploadBook(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader, title string, author string) (*entity.Book, error)
+	// UploadBookAsync saves the file locally, inserts the book with status "uploading",
+	// returns immediately (202), and uploads to cloud storage in a background goroutine.
+	UploadBookAsync(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader, title, author string) (*entity.Book, error)
+	// GetUploadProgress returns the current upload progress (0-100) for a book.
+	GetUploadProgress(bookID uuid.UUID) int
+	// CleanupOrphanedUploads marks books stuck in "uploading" as "failed".
+	// Call once on server startup.
+	CleanupOrphanedUploads(ctx context.Context) error
 	ListBooks(ctx context.Context, userID uuid.UUID, search string) ([]entity.Book, error)
 	GetBookByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*entity.Book, error)
 	DownloadBook(ctx context.Context, key string) (io.ReadCloser, int64, string, error)
+	DownloadBookRange(ctx context.Context, key string, rangeHeader string) (io.ReadCloser, string, int64, string, int, error)
 	GetBookDownloadURL(ctx context.Context, key string) (string, bool, error)
+	// GetLocalPath returns the absolute local filesystem path for a stored file.
+	// Returns ("", false, nil) when the backend does not store files locally (e.g. R2).
+	GetLocalPath(ctx context.Context, key string) (string, bool, error)
 	DeleteBook(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error
 	UpdateBookContent(ctx context.Context, id uuid.UUID, userID uuid.UUID, content string) error
@@ -40,44 +52,38 @@ func NewBookService(baseRepo repository.IBaseRepository, bookRepo repository.IBo
 	}
 }
 
-func (s *BookService) UploadBook(ctx context.Context, userID uuid.UUID, fileHeader *multipart.FileHeader, title string, author string) (*entity.Book, error) {
-	// Generate UUID filename
+// UploadBookAsync accepts the multipart file, buffers it to a local temp file
+// (fast), inserts the book record with upload_status="uploading", responds to the
+// client immediately (202), then uploads to cloud storage in a goroutine.
+func (s *BookService) UploadBookAsync(ctx context.Context, userID uuid.UUID, fileHeader *multipart.FileHeader, title, author string) (*entity.Book, error) {
 	bookID := uuid.New()
 	fileExt := strings.ToLower(filepath.Ext(fileHeader.Filename))
 	cleanExt := strings.TrimPrefix(fileExt, ".")
-
 	fileName := bookID.String() + fileExt
 
-	// Save to storage
+	// ── 1. Buffer to a local temp file (fast — avoids blocking on network) ───
 	src, err := fileHeader.Open()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open upload: %w", err)
 	}
 	defer src.Close()
 
-	contentBytes, err := io.ReadAll(src)
+	tmpFile, err := os.CreateTemp("", "readthrough-upload-*"+fileExt)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create temp file: %w", err)
 	}
+	tmpPath := tmpFile.Name()
 
-	actualReadSize := int64(len(contentBytes))
-	fmt.Printf("[UploadBookDebug] fileHeader.Size: %d, actualReadSize: %d, Filename: %s\n", fileHeader.Size, actualReadSize, fileHeader.Filename)
-
-	contentType := fileHeader.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
+	if _, err := io.Copy(tmpFile, src); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("buffer upload: %w", err)
 	}
+	tmpFile.Close()
 
-	contentReader := bytes.NewReader(contentBytes)
-	filePath, err := s.store.Upload(ctx, fileName, contentReader, actualReadSize, contentType)
-	if err != nil {
-		return nil, err
-	}
-
-	// Default values
+	// ── 2. Build book record ─────────────────────────────────────────────────
 	if title == "" {
 		title = fileHeader.Filename
-		// strip extension
 		if idx := strings.LastIndex(title, "."); idx != -1 {
 			title = title[:idx]
 		}
@@ -86,28 +92,83 @@ func (s *BookService) UploadBook(ctx context.Context, userID uuid.UUID, fileHead
 		author = "Anonymous Author"
 	}
 
-	book := &entity.Book{
-		BaseEntity: entity.BaseEntity{
-			ID: bookID,
-		},
-		UserID:      userID,
-		Title:       title,
-		Author:      author,
-		FilePath:    filePath,
-		FileType:    cleanExt,
-		FileSize:    fileHeader.Size,
-		CurrentPage: 1,
-		EpubCFI:     "",
-		TotalPages:  0,
+	contentType := fileHeader.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
 
-	if err := s.bookRepo.Create(ctx, book); err != nil {
-		// Clean up file if DB insert fails
-		s.store.Delete(ctx, fileName)
-		return nil, err
+	book := &entity.Book{
+		BaseEntity:     entity.BaseEntity{ID: bookID},
+		UserID:         userID,
+		Title:          title,
+		Author:         author,
+		FilePath:       fileName, // final path; storage will confirm
+		FileType:       cleanExt,
+		FileSize:       fileHeader.Size,
+		CurrentPage:    1,
+		UploadStatus:   "uploading",
+		UploadProgress: 0,
 	}
+
+	// ── 3. Insert book immediately ───────────────────────────────────────────
+	if err := s.bookRepo.Create(ctx, book); err != nil {
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("create book record: %w", err)
+	}
+
+	// ── 4. Background goroutine: upload to cloud, update progress ────────────
+	go s.runUpload(bookID, tmpPath, fileName, fileHeader.Size, contentType)
 
 	return book, nil
+}
+
+// runUpload is the background goroutine that transfers a temp file to cloud storage.
+func (s *BookService) runUpload(bookID uuid.UUID, tmpPath, storageKey string, size int64, contentType string) {
+	defer os.Remove(tmpPath) // always clean up the temp file
+
+	ctx := context.Background()
+	GlobalUploadTracker.Set(bookID, 0)
+	defer GlobalUploadTracker.Delete(bookID)
+
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		log.Printf("[Upload] failed to open temp file for book %s: %v", bookID, err)
+		_ = s.bookRepo.UpdateUploadStatus(ctx, bookID, "failed", 0)
+		return
+	}
+	defer f.Close()
+
+	pr := NewProgressReader(f, size, func(pct int) {
+		GlobalUploadTracker.Set(bookID, pct)
+		// Persist progress to DB every 10% to survive brief disconnects
+		if pct%10 == 0 {
+			_ = s.bookRepo.UpdateUploadStatus(ctx, bookID, "uploading", pct)
+		}
+	})
+
+	filePath, err := s.store.Upload(ctx, storageKey, pr, size, contentType)
+	if err != nil {
+		log.Printf("[Upload] R2 upload failed for book %s: %v", bookID, err)
+		_ = s.bookRepo.UpdateUploadStatus(ctx, bookID, "failed", 0)
+		return
+	}
+
+	// Update status to ready and persist the final storage path
+	if err := s.bookRepo.UpdateUploadStatus(ctx, bookID, "ready", 100); err != nil {
+		log.Printf("[Upload] failed to mark book %s as ready: %v", bookID, err)
+	}
+	log.Printf("[Upload] book %s uploaded successfully to %s", bookID, filePath)
+}
+
+// GetUploadProgress returns the live upload progress (0-100) from in-memory tracker.
+func (s *BookService) GetUploadProgress(bookID uuid.UUID) int {
+	return GlobalUploadTracker.Get(bookID)
+}
+
+// CleanupOrphanedUploads marks books stuck in "uploading" as "failed".
+// Should be called once at server startup.
+func (s *BookService) CleanupOrphanedUploads(ctx context.Context) error {
+	return s.bookRepo.MarkOrphanedUploadsFailed(ctx)
 }
 
 func (s *BookService) ListBooks(ctx context.Context, userID uuid.UUID, search string) ([]entity.Book, error) {
@@ -122,8 +183,16 @@ func (s *BookService) DownloadBook(ctx context.Context, key string) (io.ReadClos
 	return s.store.Download(ctx, key)
 }
 
+func (s *BookService) DownloadBookRange(ctx context.Context, key string, rangeHeader string) (io.ReadCloser, string, int64, string, int, error) {
+	return s.store.DownloadRange(ctx, key, rangeHeader)
+}
+
 func (s *BookService) GetBookDownloadURL(ctx context.Context, key string) (string, bool, error) {
 	return s.store.GetPresignedURL(ctx, key)
+}
+
+func (s *BookService) GetLocalPath(ctx context.Context, key string) (string, bool, error) {
+	return s.store.GetLocalPath(ctx, key)
 }
 
 func (s *BookService) UpdateProgress(ctx context.Context, id uuid.UUID, userID uuid.UUID, page int, cfi string, totalPages int) error {

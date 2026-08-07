@@ -8,7 +8,7 @@ interface EpubViewerProps {
   initialCfi: string;
   onProgressChange: (cfi: string) => void;
   onSelection: (text: string, x?: number, y?: number) => void;
-  theme: 'light' | 'dark' | 'sepia';
+  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
   onOutlineLoaded?: (outline: any[]) => void;
   readThroughActive?: boolean;
   rtSettings?: {
@@ -242,7 +242,13 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
       setLoading(true);
       setError('');
       try {
-        const book = Epub(url);
+        let inputData: any = url;
+        if (typeof url === 'string') {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('Could not download EPUB binary content.');
+          inputData = await res.arrayBuffer();
+        }
+        const book = Epub(inputData);
         bookRef.current = book;
         await book.ready;
         if (!active) return;
@@ -275,20 +281,46 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
         rendition.hooks.content.register((contents: any) => {
           const doc = contents.document;
 
-          if (readThroughActive) {
-            const style = doc.createElement('style');
-            style.id = 'epub-kindle-transparent-override';
-            style.innerHTML = `
-              * {
-                background-color: transparent !important;
-              }
-              img {
-                mix-blend-mode: multiply;
-                opacity: 0.85;
-              }
-            `;
-            doc.head.appendChild(style);
-          }
+          const activeFont = readThroughActive && rtSettings
+            ? (rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
+              rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
+              rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" :
+              "'Lora', Georgia, serif")
+            : "'Lora', Georgia, serif";
+
+          const style = doc.createElement('style');
+          style.id = 'epub-kindle-typography-override';
+          style.innerHTML = `
+            * {
+              ${readThroughActive ? 'background-color: transparent !important;' : ''}
+              font-family: ${activeFont} !important;
+              text-align: left !important;
+              word-spacing: 0px !important;
+              letter-spacing: 0px !important;
+              text-justify: none !important;
+            }
+            body, p, div, span, blockquote, li, pre, code {
+              font-family: ${activeFont} !important;
+              text-align: left !important;
+              word-break: normal !important;
+              overflow-wrap: break-word !important;
+              word-spacing: 0px !important;
+              letter-spacing: 0px !important;
+              text-justify: none !important;
+              white-space: normal !important;
+            }
+            p {
+              margin-bottom: 1.2em !important;
+              text-align: left !important;
+            }
+            img {
+              mix-blend-mode: multiply;
+              opacity: 0.85;
+              max-width: 100% !important;
+              height: auto !important;
+            }
+          `;
+          doc.head.appendChild(style);
 
           // Stop propagation inside the iframe to block external extensions
           doc.addEventListener('mouseup', (e: MouseEvent) => {
@@ -452,8 +484,8 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
     // Calculate values
     const activeFontSize = readThroughActive && rtSettings ? (80 + (rtSettings.fontSizeLevel - 1) * 15) : fontSize;
     const activePadding = readThroughActive && rtSettings
-      ? (rtSettings.margin === 'narrow' ? '0 4%' : rtSettings.margin === 'normal' ? '0 10%' : '0 18%')
-      : '0 24px';
+      ? (rtSettings.margin === 'narrow' ? '48px 12px' : rtSettings.margin === 'normal' ? '48px 24px' : '48px 36px')
+      : '48px 24px';
     const activeLineHeight = readThroughActive && rtSettings ? rtSettings.lineHeight : '1.85';
     const activeFontFamily = readThroughActive && rtSettings
       ? (rtSettings.fontFamily === 'serif' ? "'Lora', Georgia, serif" :
@@ -475,8 +507,8 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
         'padding': `${activePadding} !important`,
       },
       p: {
-        'margin-bottom': '1.5em !important',
-        'text-align': 'justify !important',
+        'margin-bottom': '1.3em !important',
+        'text-align': 'left !important',
       }
     });
 
@@ -490,8 +522,8 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
         'padding': `${activePadding} !important`,
       },
       p: {
-        'margin-bottom': '1.5em !important',
-        'text-align': 'justify !important',
+        'margin-bottom': '1.3em !important',
+        'text-align': 'left !important',
       }
     });
 
@@ -505,8 +537,53 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
         'padding': `${activePadding} !important`,
       },
       p: {
-        'margin-bottom': '1.5em !important',
-        'text-align': 'justify !important',
+        'margin-bottom': '1.3em !important',
+        'text-align': 'left !important',
+      }
+    });
+
+    renditionRef.current.themes.register('oled', {
+      body: {
+        'font-family': `${activeFontFamily} !important`,
+        'line-height': `${activeLineHeight} !important`,
+        'font-size': `${activeFontSize}% !important`,
+        'color': '#e5e5e5 !important',
+        'background-color': activeBgColor || '#000000 !important',
+        'padding': `${activePadding} !important`,
+      },
+      p: {
+        'margin-bottom': '1.3em !important',
+        'text-align': 'left !important',
+      }
+    });
+
+    renditionRef.current.themes.register('mint', {
+      body: {
+        'font-family': `${activeFontFamily} !important`,
+        'line-height': `${activeLineHeight} !important`,
+        'font-size': `${activeFontSize}% !important`,
+        'color': '#1b4332 !important',
+        'background-color': activeBgColor || '#e8f5e9 !important',
+        'padding': `${activePadding} !important`,
+      },
+      p: {
+        'margin-bottom': '1.3em !important',
+        'text-align': 'left !important',
+      }
+    });
+
+    renditionRef.current.themes.register('eink', {
+      body: {
+        'font-family': `${activeFontFamily} !important`,
+        'line-height': `${activeLineHeight} !important`,
+        'font-size': `${activeFontSize}% !important`,
+        'color': '#000000 !important',
+        'background-color': activeBgColor || '#ffffff !important',
+        'padding': `${activePadding} !important`,
+      },
+      p: {
+        'margin-bottom': '1.3em !important',
+        'text-align': 'left !important',
       }
     });
 

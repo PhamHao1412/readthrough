@@ -9,7 +9,7 @@ interface MdViewerProps {
   onProgressChange: (cfi: string) => void;
   onSelection: (text: string, x?: number, y?: number) => void;
   onOutlineLoaded?: (outline: any[]) => void;
-  theme: 'light' | 'dark' | 'sepia';
+  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
   readThroughActive?: boolean;
   rtSettings?: {
     fontFamily: string;

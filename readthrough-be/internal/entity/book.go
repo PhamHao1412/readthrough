@@ -14,6 +14,12 @@ type Book struct {
 	CurrentPage int       `gorm:"column:current_page;type:integer;not null;default:1" json:"current_page"`
 	EpubCFI     string    `gorm:"column:epub_cfi;type:text;default:''" json:"epub_cfi"`
 	TotalPages  int       `gorm:"column:total_pages;type:integer;not null;default:0" json:"total_pages"`
+	// Async upload tracking
+	// UploadStatus: "uploading" → file is being transferred to cloud storage
+	//               "ready"     → file is available and the book can be opened
+	//               "failed"    → upload failed; the book record is a tombstone
+	UploadStatus   string `gorm:"column:upload_status;type:varchar(20);not null;default:'ready'" json:"upload_status"`
+	UploadProgress int    `gorm:"column:upload_progress;type:integer;not null;default:0" json:"upload_progress"`
 }
 
 func (Book) TableName() string {

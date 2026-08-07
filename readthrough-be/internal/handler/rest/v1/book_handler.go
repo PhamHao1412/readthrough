@@ -36,13 +36,16 @@ func (h *BookHandler) Upload(c *gin.Context) {
 	title := c.PostForm("title")
 	author := c.PostForm("author")
 
-	book, err := h.bookSvc.UploadBook(c.Request.Context(), userID, file, title, author)
+	// UploadBookAsync: saves to temp, inserts DB with status="uploading",
+	// returns immediately while a goroutine handles the actual cloud upload.
+	book, err := h.bookSvc.UploadBookAsync(c.Request.Context(), userID, file, title, author)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ResponseInternalServerError(err))
 		return
 	}
 
-	c.JSON(http.StatusCreated, dto.ResponseOK(book).WithMessage("Document uploaded successfully"))
+	// 202 Accepted: request received, upload processing in background.
+	c.JSON(http.StatusAccepted, dto.ResponseOK(book).WithMessage("Upload started. The document will be ready shortly."))
 }
 
 func (h *BookHandler) List(c *gin.Context) {
@@ -109,17 +112,31 @@ func (h *BookHandler) GetContent(c *gin.Context) {
 		return
 	}
 
-	// Get file stream from storage using the base filename as key
 	fileName := filepath.Base(book.FilePath)
-	reader, size, contentType, err := h.bookSvc.DownloadBook(c.Request.Context(), fileName)
+
+	// ── Local storage: http.ServeFile handles Range / 206 natively ──────────
+	if localPath, ok, _ := h.bookSvc.GetLocalPath(c.Request.Context(), fileName); ok {
+		http.ServeFile(c.Writer, c.Request, localPath)
+		return
+	}
+
+	// ── Cloud storage (R2/S3): proxy Range header to storage backend ─────────
+	// PDF.js sends "Range: bytes=X-Y" for each page chunk. We forward that to
+	// R2's GetObject which returns 206 Partial Content, then relay it back.
+	rangeHeader := c.GetHeader("Range")
+	body, contentRange, size, contentType, status, err := h.bookSvc.DownloadBookRange(c.Request.Context(), fileName, rangeHeader)
 	if err != nil {
 		c.JSON(http.StatusNotFound, dto.ResponseNotFound(err))
 		return
 	}
-	defer reader.Close()
+	defer body.Close()
 
-	c.Header("Cache-Control", "private, max-age=31536000, immutable")
-	c.DataFromReader(http.StatusOK, size, contentType, reader, nil)
+	c.Header("Accept-Ranges", "bytes")
+	c.Header("Cache-Control", "private, max-age=3600")
+	if contentRange != "" {
+		c.Header("Content-Range", contentRange)
+	}
+	c.DataFromReader(status, size, contentType, body, nil)
 }
 
 func (h *BookHandler) GetDownloadURL(c *gin.Context) {

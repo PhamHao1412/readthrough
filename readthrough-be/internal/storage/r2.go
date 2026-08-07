@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -76,6 +77,48 @@ func (s *R2Storage) Download(ctx context.Context, key string) (io.ReadCloser, in
 	return out.Body, size, contentType, nil
 }
 
+// DownloadRange fetches a specific byte range from Cloudflare R2.
+// rangeHeader is the raw HTTP Range value, e.g. "bytes=0-65535".
+// R2 / S3 returns 206 Partial Content when a Range is provided.
+func (s *R2Storage) DownloadRange(ctx context.Context, key string, rangeHeader string) (io.ReadCloser, string, int64, string, int, error) {
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(s.bucketName),
+		Key:    aws.String(key),
+	}
+	if rangeHeader != "" {
+		input.Range = aws.String(rangeHeader)
+	}
+
+	out, err := s.client.GetObject(ctx, input)
+	if err != nil {
+		return nil, "", 0, "", 0, err
+	}
+
+	// Determine returned byte range (Content-Range header from R2)
+	contentRange := ""
+	if out.ContentRange != nil {
+		contentRange = *out.ContentRange
+	}
+
+	// Full file size from Content-Range (e.g. "bytes 0-65535/216603648" → 216603648)
+	var totalSize int64
+	if out.ContentLength != nil {
+		totalSize = *out.ContentLength
+	}
+
+	contentType := ""
+	if out.ContentType != nil {
+		contentType = *out.ContentType
+	}
+
+	status := http.StatusOK
+	if rangeHeader != "" {
+		status = http.StatusPartialContent
+	}
+
+	return out.Body, contentRange, totalSize, contentType, status, nil
+}
+
 // Delete removes a file from Cloudflare R2.
 func (s *R2Storage) Delete(ctx context.Context, key string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
@@ -98,4 +141,10 @@ func (s *R2Storage) GetPresignedURL(ctx context.Context, key string) (string, bo
 		return "", false, err
 	}
 	return req.URL, true, nil
+}
+
+// GetLocalPath returns ("", false, nil) for R2 — files live in the cloud, not on local disk.
+// The handler should fall back to streaming via Download() or use a presigned URL.
+func (s *R2Storage) GetLocalPath(_ context.Context, _ string) (string, bool, error) {
+	return "", false, nil
 }

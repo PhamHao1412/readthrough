@@ -3,7 +3,7 @@ import { BookOpen, User, Mail, Lock, ArrowRight, AlertCircle, Loader2, Sun, Moon
 import { useAuth } from '../context/AuthContext';
 
 interface LoginScreenProps {
-  theme: 'light' | 'dark' | 'sepia';
+  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
   onThemeChange: () => void;
 }
 

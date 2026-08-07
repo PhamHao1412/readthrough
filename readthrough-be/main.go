@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"readthrough-be/cmd/serverd/route"
@@ -96,6 +97,13 @@ func main() {
 
 	// Services
 	bookSvc := service.NewBookService(baseRepo, bookRepo, store)
+
+	// Clean up any books left in "uploading" status from a previous server restart.
+	// They can never complete now, so mark them as "failed".
+	if err := bookSvc.CleanupOrphanedUploads(context.Background()); err != nil {
+		log.Printf("warn: failed to clean up orphaned uploads: %v", err)
+	}
+
 	translateSvc := service.NewTranslateService()
 
 	aiSvc := service.NewAIService(cfg.OpenAIApiKey, cfg.OpenAIModel, aiExplanationRepo)

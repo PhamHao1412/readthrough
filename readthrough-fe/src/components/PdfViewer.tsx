@@ -13,6 +13,12 @@ interface PdfViewerProps {
   onSelection: (text: string, x?: number, y?: number) => void;
   onOutlineLoaded?: (outline: any[]) => void;
   readThroughActive?: boolean;
+  rtSettings?: {
+    fontFamily: string;
+    fontSizeLevel: number;
+    margin: string;
+    lineHeight: string;
+  };
 }
 
 /**
@@ -96,6 +102,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
   onSelection,
   onOutlineLoaded,
   readThroughActive = false,
+  rtSettings,
 }) => {
   const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState<number>(initialPage || 1);
@@ -146,9 +153,37 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
     if (!wrapperRef.current) return 1.4;
     const page = await doc.getPage(1);
     const baseViewport = page.getViewport({ scale: 1 });
-    const availableWidth = wrapperRef.current.clientWidth - 48;
-    return Math.max(0.5, Math.min(3.0, availableWidth / baseViewport.width));
-  }, []);
+    const isMobile = window.innerWidth <= 768;
+    const padding = isMobile ? 0 : 32;
+    const availableWidth = wrapperRef.current.clientWidth - padding;
+    // On mobile screens, scale up by 1.25x so text is large, readable, and fills screen width
+    const mobileBoost = isMobile ? 1.25 : 1.0;
+    let baseScale = (availableWidth / baseViewport.width) * mobileBoost;
+    if (rtSettings?.fontSizeLevel) {
+      baseScale = baseScale * (1 + (rtSettings.fontSizeLevel - 4) * 0.18);
+    }
+    return Math.max(0.4, Math.min(4.0, baseScale));
+  }, [rtSettings?.fontSizeLevel]);
+
+  // Auto fit-to-width on window or wrapper resize
+  useEffect(() => {
+    if (!pdf || !wrapperRef.current) return;
+    let timeoutId: any = null;
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(async () => {
+        if (window.innerWidth <= 768 || readThroughActive) {
+          const fitScale = await computeFitScale(pdf);
+          setScale(fitScale);
+        }
+      }, 100);
+    });
+    observer.observe(wrapperRef.current);
+    return () => {
+      observer.disconnect();
+      clearTimeout(timeoutId);
+    };
+  }, [pdf, computeFitScale, readThroughActive]);
 
   // ── Load document ──────────────────────────────────────────────
   useEffect(() => {
@@ -157,7 +192,23 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
       setLoading(true);
       setError('');
       try {
-        const doc = await pdfjs.getDocument(url).promise;
+        // Use range-based loading: only fetch bytes needed for the current page
+        // instead of downloading the entire PDF file upfront.
+        // - disableAutoFetch: prevents PDF.js from pre-downloading the whole file
+        // - disableStream: TRUE → forces range transport (sends Range: bytes=X-Y)
+        //   IMPORTANT: false would use streaming transport = still downloads full file
+        // - rangeChunkSize: 512KB per chunk → 8× fewer requests than 64KB default
+        //   Larger chunks = fewer Range requests = less rate limiting risk
+        // - httpHeaders: pass JWT so the authenticated /content endpoint works
+        const token = localStorage.getItem('readthrough_access_token');
+        const doc = await pdfjs.getDocument({
+          url,
+          rangeChunkSize: 524288, // 512KB per range chunk (was 64KB → reduces request count 8×)
+          disableAutoFetch: true, // do NOT pre-fetch the entire file
+          disableStream: true,    // MUST be true to use range transport (not streaming)
+          httpHeaders: token ? { Authorization: `Bearer ${token}` } : {},
+          withCredentials: false,
+        }).promise;
         if (!active) return;
         setPdf(doc);
         setTotalPages(doc.numPages);
@@ -165,22 +216,26 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
         setPageNumber(start);
         onPageChange(start, doc.numPages);
 
-        // Restore zoom level from localStorage if it exists
-        const savedZoom = localStorage.getItem(`readthrough_zoom_pdf_${bookId}`);
-        if (savedZoom) {
-          const parsed = parseFloat(savedZoom);
-          if (!isNaN(parsed) && parsed >= 0.5 && parsed <= 3.0) {
-            setScale(parsed);
-            return;
-          }
-        }
-
-        requestAnimationFrame(async () => {
-          if (!active) return;
+        // Calculate fit scale immediately for mobile viewports
+        const isMobile = window.innerWidth <= 768;
+        if (isMobile) {
           const fitScale = await computeFitScale(doc);
           setScale(fitScale);
-          localStorage.setItem(`readthrough_zoom_pdf_${bookId}`, fitScale.toString());
-        });
+        } else {
+          const savedZoom = localStorage.getItem(`readthrough_zoom_pdf_${bookId}`);
+          if (savedZoom) {
+            const parsed = parseFloat(savedZoom);
+            if (!isNaN(parsed) && parsed >= 0.5 && parsed <= 3.0) {
+              setScale(parsed);
+              return;
+            }
+          }
+          requestAnimationFrame(async () => {
+            if (!active) return;
+            const fitScale = await computeFitScale(doc);
+            setScale(fitScale);
+          });
+        }
       } catch {
         if (active) setError('Failed to open this PDF file. Please check the file.');
       } finally {
@@ -189,7 +244,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
     };
     load();
     return () => { active = false; };
-  }, [url, bookId]);
+  }, [url, bookId, computeFitScale]);
 
   // Sync initialPage prop changes
   useEffect(() => {
@@ -210,13 +265,18 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
         const mapOutlineItems = async (items: any[]): Promise<any[]> => {
           const mapped = [];
           for (const item of items) {
+            // Skip entries with no meaningful title — these are structural PDF
+            // bookmarks with blank labels that only clutter the TOC.
+            const title = (item.title ?? '').trim();
+            if (!title) continue;
+
             let targetPage: number | null = null;
             if (item.dest) {
               targetPage = await resolveDest(item.dest);
             }
 
             const mappedItem: any = {
-              title: item.title,
+              title,
               target: targetPage,
             };
 

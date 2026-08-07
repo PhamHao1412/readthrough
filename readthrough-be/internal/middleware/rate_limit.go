@@ -124,8 +124,12 @@ func (rl *RateLimiter) cleanupExpired() {
 // RateLimitMiddleware enforces rate limiting per user or client IP.
 func RateLimitMiddleware(limiter *RateLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 0. Skip rate limiting for health check endpoint to prevent false restarts during deployments
-		if c.Request.URL.Path == "/api/v1/health" {
+		// 0. Skip rate limiting for specific endpoints that are not subject to abuse
+		//    - /health: prevent false restarts during deployments
+		//    - /books/.../content: PDF.js range transport fires many concurrent requests
+		//      per page; this is expected behavior and should not be rate-limited.
+		path := c.Request.URL.Path
+		if path == "/api/v1/health" || strings.HasSuffix(path, "/content") {
 			c.Next()
 			return
 		}
