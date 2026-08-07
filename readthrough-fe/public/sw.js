@@ -35,8 +35,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Skip non-GET requests or browser extension requests
-  if (event.request.method !== 'GET' || !url.protocol.startsWith('http')) {
+  // Skip non-GET requests, extension requests, or Range requests (HTTP 206)
+  if (
+    event.request.method !== 'GET' ||
+    !url.protocol.startsWith('http') ||
+    event.request.headers.has('range') ||
+    url.pathname.endsWith('/content')
+  ) {
     return;
   }
 

@@ -626,39 +626,68 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       setContentError('');
       let isPresigned = false;
       try {
-        // ── PDF: skip blob, use direct URL for Range-based streaming ──────────
-        // PDF.js supports HTTP Range requests natively, so we just give it the
-        // URL and let it fetch only the bytes it needs per page.
-        if (book.file_type === 'pdf') {
-          // Always use the authenticated /content endpoint for PDFs.
-          // The backend proxies Range requests (HTTP 206) to R2, so PDF.js
-          // can fetch only the bytes it needs per page — no full download.
-          if (active) {
-            setDirectPdfUrl(`/api/v1/books/${book.id}/content`);
-          }
-          return;
-        }
-
-        // ── Non-PDF: use Cache API + full blob download (existing behaviour) ──
         const cacheName = 'readthrough-book-cache';
         const cacheKey = `/books/${book.id}/content`;
         const cache = await caches.open(cacheName);
         const cachedResponse = await cache.match(cacheKey);
 
+        // ── 1. Cache Hit: load instantly in 0ms from local cache ────────────
         if (cachedResponse) {
           const rawBlob = await cachedResponse.blob();
           if (active && rawBlob.size > 0) {
-            const mimeType = book.file_type === 'epub' ? 'application/epub+zip' : book.file_type === 'pdf' ? 'application/pdf' : 'text/plain';
+            const mimeType = book.file_type === 'epub'
+              ? 'application/epub+zip'
+              : book.file_type === 'pdf'
+                ? 'application/pdf'
+                : 'text/plain';
             const typedBlob = new Blob([rawBlob], { type: mimeType });
             localBlobUrl = URL.createObjectURL(typedBlob);
-            setBlobUrl(localBlobUrl);
+
+            if (book.file_type === 'pdf') {
+              setDirectPdfUrl(localBlobUrl);
+            } else {
+              setBlobUrl(localBlobUrl);
+            }
             setLoadingContent(false);
-            console.log('[Cache] Loaded book instantly from local cache');
+            console.log(`[Cache] Loaded "${book.title}" instantly from local cache`);
             return;
           }
         }
 
-        // 1. Get the download URL (either R2 pre-signed or backend local path)
+        // ── 2. Large PDF (>50MB) Cache Miss: Render Page 1 instantly via Range ─
+        // while fetching full file in background to populate cache for next reload.
+        const FIFTY_MB = 50 * 1024 * 1024;
+        if (book.file_type === 'pdf' && book.file_size > FIFTY_MB) {
+          if (active) {
+            setDirectPdfUrl(`/api/v1/books/${book.id}/content`);
+            setLoadingContent(false);
+          }
+
+          // Background task to cache large PDF for future instant reloads
+          (async () => {
+            try {
+              const urlRes = await fetchWithAuth(`/api/v1/books/${book.id}/download-url`);
+              if (!urlRes.ok) return;
+              const urlJson = await urlRes.json();
+              const downloadUrl = urlJson.data?.url;
+              if (!downloadUrl) return;
+
+              const fileRes = urlJson.data?.is_presigned
+                ? await fetch(downloadUrl)
+                : await fetchWithAuth(`/api/v1/books/${book.id}/content`);
+
+              if (fileRes.ok) {
+                await cache.put(cacheKey, fileRes);
+                console.log(`[Cache] Background cached large PDF "${book.title}"`);
+              }
+            } catch (err) {
+              console.warn('[Cache] Background caching failed:', err);
+            }
+          })();
+          return;
+        }
+
+        // ── 3. Standard Cache Miss (<=50MB or EPUB/TXT/MD): fetch & cache ─────
         const urlRes = await fetchWithAuth(`/api/v1/books/${book.id}/download-url`);
         if (!urlRes.ok) throw new Error('Failed to retrieve download link.');
         const urlJson = await urlRes.json();
@@ -670,7 +699,6 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         const { url, is_presigned } = urlJson.data;
         isPresigned = !!is_presigned;
 
-        // 2. Fetch the file based on whether it is a pre-signed Cloud URL or Local fallback
         let fileRes;
         if (isPresigned) {
           fileRes = await fetch(url);
@@ -680,28 +708,37 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
 
         if (!fileRes.ok) throw new Error('Failed to download book content file.');
 
-        // Clone the response to store it in cache and get the blob for current render
         const fileResClone = fileRes.clone();
         const rawBlob = await fileRes.blob();
 
         try {
           await cache.put(cacheKey, fileResClone);
-          console.log('[Cache] Saved book content to local cache');
+          console.log(`[Cache] Saved "${book.title}" to local cache`);
         } catch (cacheErr) {
           console.warn('[Cache] Failed to write to cache storage:', cacheErr);
         }
 
         if (!active) return;
-        const mimeType = book.file_type === 'epub' ? 'application/epub+zip' : book.file_type === 'pdf' ? 'application/pdf' : 'text/plain';
+        const mimeType = book.file_type === 'epub'
+          ? 'application/epub+zip'
+          : book.file_type === 'pdf'
+            ? 'application/pdf'
+            : 'text/plain';
         const typedBlob = new Blob([rawBlob], { type: mimeType });
         localBlobUrl = URL.createObjectURL(typedBlob);
-        setBlobUrl(localBlobUrl);
+
+        if (book.file_type === 'pdf') {
+          setDirectPdfUrl(localBlobUrl);
+        } else {
+          setBlobUrl(localBlobUrl);
+        }
       } catch (err: any) {
         if (active) setContentError(err.message || 'Error loading book.');
       } finally {
         if (active) setLoadingContent(false);
       }
     };
+
 
     fetchContent();
 

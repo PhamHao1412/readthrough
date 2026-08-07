@@ -201,12 +201,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
         //   Larger chunks = fewer Range requests = less rate limiting risk
         // - httpHeaders: pass JWT so the authenticated /content endpoint works
         const token = localStorage.getItem('readthrough_access_token');
+        const isBlobUrl = url.startsWith('blob:');
         const doc = await pdfjs.getDocument({
           url,
-          rangeChunkSize: 524288, // 512KB per range chunk (was 64KB → reduces request count 8×)
-          disableAutoFetch: true, // do NOT pre-fetch the entire file
-          disableStream: true,    // MUST be true to use range transport (not streaming)
-          httpHeaders: token ? { Authorization: `Bearer ${token}` } : {},
+          rangeChunkSize: 524288, // 512KB per range chunk for HTTP streaming
+          disableAutoFetch: !isBlobUrl, // do NOT pre-fetch when using HTTP range streaming
+          disableStream: !isBlobUrl,    // use range transport for HTTP, native memory for blob URLs
+          httpHeaders: (token && !isBlobUrl) ? { Authorization: `Bearer ${token}` } : {},
           withCredentials: false,
         }).promise;
         if (!active) return;
