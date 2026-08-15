@@ -296,7 +296,7 @@ export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({
                 rtSettings.fontFamily === 'sans-serif' ? "'Inter', sans-serif" :
                 rtSettings.fontFamily === 'monospace' ? "'JetBrains Mono', monospace" :
                 rtSettings.fontFamily === 'dyslexic' ? "'Atkinson Hyperlegible', sans-serif" : undefined,
-    fontSize: `${14 + (rtSettings.fontSizeLevel - 1) * 2}px`,
+    fontSize: `${(14 + (rtSettings.fontSizeLevel - 1) * 2) + (fontSize - 18)}px`,
     lineHeight: rtSettings.lineHeight,
     paddingLeft: rtSettings.margin === 'narrow' ? '4%' : rtSettings.margin === 'normal' ? '12%' : '20%',
     paddingRight: rtSettings.margin === 'narrow' ? '4%' : rtSettings.margin === 'normal' ? '12%' : '20%',

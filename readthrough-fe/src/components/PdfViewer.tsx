@@ -107,7 +107,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
   const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState<number>(initialPage || 1);
   const [totalPages, setTotalPages] = useState<number>(0);
-  const [scale, setScale] = useState<number>(1.4);
+  const [fitScale, setFitScale] = useState<number>(1.4);
+  const [zoomOffset, setZoomOffset] = useState<number>(() => {
+    const saved = localStorage.getItem(`readthrough_zoom_offset_pdf_${bookId}`);
+    return saved ? parseFloat(saved) : 0;
+  });
+  const scale = Math.max(0.5, Math.min(3.0, +(fitScale + zoomOffset).toFixed(2)));
+
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
 
@@ -173,8 +179,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
       clearTimeout(timeoutId);
       timeoutId = setTimeout(async () => {
         if (window.innerWidth <= 768 || readThroughActive) {
-          const fitScale = await computeFitScale(pdf);
-          setScale(fitScale);
+          const fitScaleVal = await computeFitScale(pdf);
+          setFitScale(fitScaleVal);
         }
       }, 100);
     });
@@ -220,21 +226,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
         // Calculate fit scale immediately for mobile viewports
         const isMobile = window.innerWidth <= 768;
         if (isMobile) {
-          const fitScale = await computeFitScale(doc);
-          setScale(fitScale);
+          const fitScaleVal = await computeFitScale(doc);
+          setFitScale(fitScaleVal);
         } else {
-          const savedZoom = localStorage.getItem(`readthrough_zoom_pdf_${bookId}`);
-          if (savedZoom) {
-            const parsed = parseFloat(savedZoom);
-            if (!isNaN(parsed) && parsed >= 0.5 && parsed <= 3.0) {
-              setScale(parsed);
-              return;
-            }
-          }
           requestAnimationFrame(async () => {
             if (!active) return;
-            const fitScale = await computeFitScale(doc);
-            setScale(fitScale);
+            const fitScaleVal = await computeFitScale(doc);
+            setFitScale(fitScaleVal);
           });
         }
       } catch {
@@ -482,12 +480,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
   }, [pageNumber, totalPages, onPageChange]);
 
   // ── Zoom ───────────────────────────────────────────────────────
-  const zoom = useCallback((factor: number) =>
-    setScale(prev => {
-      const next = Math.max(0.5, Math.min(3.0, +(prev + factor).toFixed(2)));
-      localStorage.setItem(`readthrough_zoom_pdf_${bookId}`, next.toString());
+  const zoom = useCallback((factor: number) => {
+    setZoomOffset(prev => {
+      const next = +(prev + factor).toFixed(2);
+      localStorage.setItem(`readthrough_zoom_offset_pdf_${bookId}`, next.toString());
       return next;
-    }), [bookId]);
+    });
+  }, [bookId]);
 
   // Arrow key navigation + Command +/- Zoom
   useEffect(() => {
@@ -736,11 +735,13 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
     };
   }, []);
 
+  // ── Bottom Controls Actions ────────────────────────────────────
   const fitWidth = useCallback(async () => {
     if (!pdf) return;
-    const fitScale = await computeFitScale(pdf);
-    setScale(fitScale);
-    localStorage.setItem(`readthrough_zoom_pdf_${bookId}`, fitScale.toString());
+    const fitScaleVal = await computeFitScale(pdf);
+    setFitScale(fitScaleVal);
+    setZoomOffset(0);
+    localStorage.setItem(`readthrough_zoom_offset_pdf_${bookId}`, '0');
   }, [pdf, computeFitScale, bookId]);
 
   // ── Render ─────────────────────────────────────────────────────

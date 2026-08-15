@@ -277,6 +277,7 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
           flow: readThroughActive ? 'paginated' : 'scrolled-doc',
         });
         renditionRef.current = rendition;
+        rendition.themes.fontSize(`${fontSize}%`);
 
         rendition.hooks.content.register((contents: any) => {
           const doc = contents.document;
