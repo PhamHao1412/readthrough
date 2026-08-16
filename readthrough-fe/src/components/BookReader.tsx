@@ -654,10 +654,9 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           }
         }
 
-        // ── 2. Large PDF (>50MB) Cache Miss: Render Page 1 instantly via Range ─
+        // ── 2. PDF Cache Miss: Render instantly via Range Streaming ─────────
         // while fetching full file in background to populate cache for next reload.
-        const FIFTY_MB = 50 * 1024 * 1024;
-        if (book.file_type === 'pdf' && book.file_size > FIFTY_MB) {
+        if (book.file_type === 'pdf') {
           // Get presigned URL first so large PDF also bypasses BE proxy
           let instantUrl = `/api/v1/books/${book.id}/content`; // fallback
           try {
