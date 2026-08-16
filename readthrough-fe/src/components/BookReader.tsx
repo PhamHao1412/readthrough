@@ -658,8 +658,22 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         // while fetching full file in background to populate cache for next reload.
         const FIFTY_MB = 50 * 1024 * 1024;
         if (book.file_type === 'pdf' && book.file_size > FIFTY_MB) {
+          // Get presigned URL first so large PDF also bypasses BE proxy
+          let instantUrl = `/api/v1/books/${book.id}/content`; // fallback
+          try {
+            const urlRes = await fetchWithAuth(`/api/v1/books/${book.id}/download-url`);
+            if (urlRes.ok) {
+              const urlJson = await urlRes.json();
+              if (urlJson.data?.url && urlJson.data?.is_presigned) {
+                instantUrl = urlJson.data.url; // use R2 presigned URL directly
+              }
+            }
+          } catch {
+            // ignore — use fallback /content
+          }
+
           if (active) {
-            setDirectPdfUrl(`/api/v1/books/${book.id}/content`);
+            setDirectPdfUrl(instantUrl);
             setLoadingContent(false);
           }
 
@@ -686,6 +700,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           })();
           return;
         }
+
 
         // ── 3. Standard Cache Miss (<=50MB or EPUB/TXT/MD): fetch & cache ─────
         const urlRes = await fetchWithAuth(`/api/v1/books/${book.id}/download-url`);
