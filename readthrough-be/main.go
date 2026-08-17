@@ -57,10 +57,8 @@ func main() {
 		log.Fatalf("failed to connect database: %v", err)
 	}
 	//
-	//// Run GORM migrations
-	//if err := db.AutoMigrateAndSeed(dbConn); err != nil {
-	//	log.Fatalf("failed to auto migrate and seed database: %v", err)
-	//}
+	// Auto migrate entities
+	_ = dbConn.AutoMigrate(&entity.Bookmark{})
 
 	// Storage setup (Cloudflare R2 or Local fallback)
 	var store storage.Storage
@@ -82,6 +80,7 @@ func main() {
 	vocabRepo := repository.NewVocabularyRepository(dbConn)
 	userRepo := repository.NewUserRepository(dbConn)
 	tokenRepo := repository.NewRefreshTokenRepository(dbConn)
+	bookmarkRepo := repository.NewBookmarkRepository(dbConn)
 
 	aiExplanationRepo := repository.NewAIExplanationRepository(dbConn)
 
@@ -109,6 +108,7 @@ func main() {
 	aiSvc := service.NewAIService(cfg.OpenAIApiKey, cfg.OpenAIModel, aiExplanationRepo)
 	vocabSvc := service.NewVocabularyService(vocabRepo)
 	authSvc := service.NewAuthService(userRepo, tokenRepo)
+	bookmarkSvc := service.NewBookmarkService(bookmarkRepo)
 
 	// Handlers
 	bookHandler := v1.NewBookHandler(bookSvc)
@@ -117,9 +117,10 @@ func main() {
 	healthHandler := v1.NewHealthHandler(dbConn)
 	vocabHandler := v1.NewVocabularyHandler(vocabSvc)
 	authHandler := v1.NewAuthHandler(authSvc)
+	bookmarkHandler := v1.NewBookmarkHandler(bookmarkSvc)
 
 	// Router setup
-	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler, aiHandler, limiter, aiCreditManager)
+	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler, aiHandler, bookmarkHandler, limiter, aiCreditManager)
 
 	log.Printf("%s service running at :%s", cfg.AppName, cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {

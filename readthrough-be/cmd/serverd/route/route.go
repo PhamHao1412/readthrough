@@ -16,6 +16,7 @@ func V1Router(
 	vocabHandler *v1.VocabularyHandler,
 	authHandler *v1.AuthHandler,
 	aiHandler *v1.AIHandler,
+	bookmarkHandler *v1.BookmarkHandler,
 	limiter *middleware.RateLimiter,
 	aiCreditManager *middleware.AICreditManager,
 ) {
@@ -66,6 +67,18 @@ func V1Router(
 			books.DELETE("/:id", bookHandler.Delete)
 			books.PUT("/:id/progress", bookHandler.UpdateProgress)
 			books.PUT("/:id/content", bookHandler.UpdateContent)
+
+			// Bookmarks under book
+			books.GET("/:id/bookmarks", bookmarkHandler.ListByBook)
+			books.POST("/:id/bookmarks", bookmarkHandler.Add)
+			books.DELETE("/:id/bookmarks/:bookmark_id", bookmarkHandler.Delete)
+		}
+
+		// Bookmarks Routes (Protected - all user's bookmarks)
+		bookmarks := api.Group("/bookmarks", middleware.AuthMiddleware())
+		{
+			bookmarks.GET("", bookmarkHandler.ListAll)
+			bookmarks.DELETE("/:id", bookmarkHandler.Delete)
 		}
 
 		// Vocabularies Routes (Protected)

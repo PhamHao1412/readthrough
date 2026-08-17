@@ -32,6 +32,13 @@ type SaveVocabularyRequest struct {
 	AudioURL        string `json:"audio_url"`
 }
 
+type CreateBookmarkRequest struct {
+	Page       int    `json:"page"`
+	PageNumber int    `json:"page_number"`
+	Title      string `json:"title"`
+	Snippet    string `json:"snippet"`
+}
+
 type SignUpRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=30"`
 	Email    string `json:"email" binding:"required,email"`
