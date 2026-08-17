@@ -1,12 +1,10 @@
-const CACHE_NAME = 'readthrough-kindle-v1';
+const CACHE_NAME = 'readthrough-shell-v2';
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icons/icon.svg'
 ];
 
-// Install event - cache core app shell
+// Install event - cache core shell assets
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -15,7 +13,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate event - clean up old caches
+// Activate event - clean up old caches immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -31,11 +29,11 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch event - Stale-while-revalidate strategy for UI, Network-first for API
+// Fetch event
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Skip non-GET requests, extension requests, or Range requests (HTTP 206)
+  // Skip non-GET, chrome-extension, or Range requests
   if (
     event.request.method !== 'GET' ||
     !url.protocol.startsWith('http') ||
@@ -45,30 +43,53 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API calls: Network-first
+  // 1. API calls: Always Network-First
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
-      fetch(event.request).catch(() => {
-        return caches.match(event.request);
-      })
+      fetch(event.request).catch(() => caches.match(event.request))
     );
     return;
   }
 
-  // Static assets & App shell: Stale-while-revalidate
+  // 2. HTML navigation requests (Page refresh / routing): Always Network-First!
+  // (Prevents serving stale HTML with outdated Vite JS bundle hashes that cause white screen)
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.html')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          return caches.match(event.request).then((cached) => cached || caches.match('/'));
+        })
+    );
+    return;
+  }
+
+  // 3. Static assets: Stale-while-revalidate, but only cache valid non-HTML responses
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200) {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-        }
-        return networkResponse;
-      }).catch((err) => {
-        console.log('[SW] Fetch failed, serving cached asset if available:', err);
-      });
+      const fetchPromise = fetch(event.request)
+        .then((networkResponse) => {
+          if (
+            networkResponse &&
+            networkResponse.status === 200 &&
+            networkResponse.type === 'basic'
+          ) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
+          return networkResponse;
+        })
+        .catch(() => cachedResponse);
 
       return cachedResponse || fetchPromise;
     })
