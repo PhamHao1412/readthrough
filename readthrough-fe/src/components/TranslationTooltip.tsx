@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Copy, Check, X, AlertTriangle, Volume2 } from 'lucide-react';
+import { formatUrl } from '../context/AuthContext';
 
 interface TranslationTooltipProps {
   text: string;
@@ -152,7 +153,7 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const res = await fetch('/api/v1/translate', {
+        const res = await fetch(formatUrl('/api/v1/translate'), {
           method: 'POST',
           headers: headers,
           body: JSON.stringify({ text }),
@@ -195,7 +196,7 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const res = await fetch('/api/v1/explain', {
+        const res = await fetch(formatUrl('/api/v1/explain'), {
           method: 'POST',
           headers: headers,
           body: JSON.stringify({

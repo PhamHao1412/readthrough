@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Copy, Check, X, AlertTriangle, Volume2, Sparkles } from 'lucide-react';
+import { formatUrl } from '../context/AuthContext';
 
 interface TranslationBottomSheetProps {
   text: string;
@@ -39,7 +40,7 @@ export const TranslationBottomSheet: React.FC<TranslationBottomSheetProps> = ({
         const token = localStorage.getItem('readthrough_access_token');
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const res = await fetch('/api/v1/translate', {
+        const res = await fetch(formatUrl('/api/v1/translate'), {
           method: 'POST',
           headers,
           body: JSON.stringify({ text }),
@@ -73,7 +74,7 @@ export const TranslationBottomSheet: React.FC<TranslationBottomSheetProps> = ({
         const token = localStorage.getItem('readthrough_access_token');
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const res = await fetch('/api/v1/explain', {
+        const res = await fetch(formatUrl('/api/v1/explain'), {
           method: 'POST',
           headers,
           body: JSON.stringify({

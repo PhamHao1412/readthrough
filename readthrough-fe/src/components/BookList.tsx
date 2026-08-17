@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { UploadCloud, Search, BookOpen, FileText, FileDown, Plus, AlertCircle, CheckCircle, Loader2, Trash2, Sparkles, X } from 'lucide-react';
 import { Book } from './BookReader';
 import { PasteMarkdownModal } from './PasteMarkdownModal';
+import { formatUrl } from '../context/AuthContext';
 
 interface BookListProps {
   books: Book[];
@@ -61,7 +62,7 @@ export const BookList: React.FC<BookListProps> = ({
 
     try {
       // Request presigned URL & create book record in DB
-      const presignRes = await fetch('/api/v1/books/presign', {
+      const presignRes = await fetch(formatUrl('/api/v1/books/presign'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
@@ -100,7 +101,7 @@ export const BookList: React.FC<BookListProps> = ({
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               // Finalize upload on server
-              const finalizeRes = await fetch(`/api/v1/books/${book.id}/finalize`, {
+              const finalizeRes = await fetch(formatUrl(`/api/v1/books/${book.id}/finalize`), {
                 method: 'POST',
                 headers: authHeaders,
               });
@@ -115,7 +116,7 @@ export const BookList: React.FC<BookListProps> = ({
               setError(`Finalize error for "${titleWithoutExt}".`);
             }
           } else {
-            setError(`R2 upload failed (${xhr.status}).`);
+            setError(`Direct R2 upload failed with status ${xhr.status}.`);
           }
           setLocalProgress(prev => {
             const next = { ...prev };
@@ -125,7 +126,7 @@ export const BookList: React.FC<BookListProps> = ({
         };
 
         xhr.onerror = () => {
-          setError(`Network error uploading "${titleWithoutExt}".`);
+          setError('Direct upload connection error.');
           setLocalProgress(prev => {
             const next = { ...prev };
             delete next[book.id];
@@ -138,7 +139,7 @@ export const BookList: React.FC<BookListProps> = ({
         xhr.send(file);
 
       } else {
-        // ── Fallback: Local storage multipart upload (background) ────────────
+        // Fallback: multipart upload via server proxy
         const formData = new FormData();
         formData.append('file', file);
         formData.append('title', titleWithoutExt);

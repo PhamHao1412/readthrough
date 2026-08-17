@@ -2,11 +2,11 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://readthrough.onrender.com/api/:path*"
+      "destination": "https://readthrough.fly.dev/api/:path*"
     },
     {
       "source": "/uploads/:path*",
-      "destination": "https://readthrough.onrender.com/uploads/:path*"
+      "destination": "https://readthrough.fly.dev/uploads/:path*"
     },
     {
       "source": "/((?!api|uploads).*)",

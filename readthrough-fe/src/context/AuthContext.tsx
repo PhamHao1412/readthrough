@@ -16,6 +16,16 @@ interface AuthContextType {
   fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
 }
 
+export const API_BASE = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/+$/, '');
+
+export const formatUrl = (path: string): string => {
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('blob:')) {
+    return path;
+  }
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${API_BASE}${cleanPath}`;
+};
+
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -39,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const refresh = getRefreshToken();
     if (refresh) {
       try {
-        await fetch('/api/v1/auth/logout', {
+        await fetch(formatUrl('/api/v1/auth/logout'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ refresh_token: refresh }),
@@ -57,7 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!refresh) return null;
 
     try {
-      const res = await fetch('/api/v1/auth/refresh', {
+      const res = await fetch(formatUrl('/api/v1/auth/refresh'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: refresh }),
@@ -90,7 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     
     const requestOptions = { ...options, headers };
-    let res = await fetch(url, requestOptions);
+    let res = await fetch(formatUrl(url), requestOptions);
 
     // If unauthorized, token might have expired, try refreshing it
     if (res.status === 401) {
@@ -99,7 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Retry request with new token
         const newHeaders = new Headers(options.headers || {});
         newHeaders.set('Authorization', `Bearer ${newAccess}`);
-        res = await fetch(url, { ...options, headers: newHeaders });
+        res = await fetch(formatUrl(url), { ...options, headers: newHeaders });
       }
     }
 
@@ -114,7 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      const res = await fetch('/api/v1/auth/me', {
+      const res = await fetch(formatUrl('/api/v1/auth/me'), {
         headers: { 'Authorization': `Bearer ${access}` }
       });
 
@@ -127,7 +137,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Try refreshing
         const newAccess = await refreshSession();
         if (newAccess) {
-          const retryRes = await fetch('/api/v1/auth/me', {
+          const retryRes = await fetch(formatUrl('/api/v1/auth/me'), {
             headers: { 'Authorization': `Bearer ${newAccess}` }
           });
           if (retryRes.ok) {
@@ -150,7 +160,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [loadCurrentUser]);
 
   const login = async (username: string, password: string) => {
-    const res = await fetch('/api/v1/auth/login', {
+    const res = await fetch(formatUrl('/api/v1/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -160,7 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.ok && json.succeeded && json.data?.access_token) {
       setTokens(json.data.access_token, json.data.refresh_token);
       // Fetch user profile
-      const userRes = await fetch('/api/v1/auth/me', {
+      const userRes = await fetch(formatUrl('/api/v1/auth/me'), {
         headers: { 'Authorization': `Bearer ${json.data.access_token}` }
       });
       if (userRes.ok) {
@@ -173,7 +183,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signup = async (username: string, email: string, password: string) => {
-    const res = await fetch('/api/v1/auth/signup', {
+    const res = await fetch(formatUrl('/api/v1/auth/signup'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, email, password }),
