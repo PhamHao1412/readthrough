@@ -11,7 +11,9 @@ import (
 	"readthrough-be/internal/entity"
 	"readthrough-be/internal/repository"
 	"readthrough-be/internal/storage"
+	"readthrough-be/internal/utils"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -162,6 +164,15 @@ func (s *BookService) runUpload(bookID uuid.UUID, tmpPath, storageKey string, si
 		return
 	}
 
+	// Extract metadata (page count & TOC bookmarks) before deleting temp file
+	if strings.ToLower(filepath.Ext(storageKey)) == ".pdf" {
+		if meta, err := utils.ExtractPDFMetadata(tmpPath); err == nil && meta != nil {
+			_ = s.bookRepo.UpdateMetadata(ctx, bookID, meta.TotalPages, meta.TOCJSON)
+			log.Printf("[Upload] extracted metadata for book %s: %d pages, %d TOC items",
+				bookID, meta.TotalPages, len(meta.Items))
+		}
+	}
+
 	// Update status to ready and persist the final storage path
 	if err := s.bookRepo.UpdateUploadStatus(ctx, bookID, "ready", 100); err != nil {
 		log.Printf("[Upload] failed to mark book %s as ready: %v", bookID, err)
@@ -238,7 +249,14 @@ func (s *BookService) FinalizeUpload(ctx context.Context, bookID uuid.UUID, user
 		return nil, fmt.Errorf("finalize upload: %w", err)
 	}
 	log.Printf("[Upload] book %s finalized (direct R2 upload confirmed)", bookID)
-	return s.bookRepo.GetByID(ctx, bookID, userID)
+	book, err := s.bookRepo.GetByID(ctx, bookID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if book.FileType == "pdf" && book.TOC == "" {
+		go s.extractAndSaveMetadata(book.ID, book.FilePath, book.FileType)
+	}
+	return book, nil
 }
 
 // CleanupOrphanedUploads marks books stuck in "uploading" as "failed".
@@ -252,7 +270,57 @@ func (s *BookService) ListBooks(ctx context.Context, userID uuid.UUID, search st
 }
 
 func (s *BookService) GetBookByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*entity.Book, error) {
-	return s.bookRepo.GetByID(ctx, id, userID)
+	book, err := s.bookRepo.GetByID(ctx, id, userID)
+	if err != nil {
+		return nil, err
+	}
+	if book.FileType == "pdf" && book.TOC == "" && book.UploadStatus == "ready" {
+		go s.extractAndSaveMetadata(book.ID, book.FilePath, book.FileType)
+	}
+	return book, nil
+}
+
+func (s *BookService) extractAndSaveMetadata(bookID uuid.UUID, filePath, fileType string) {
+	if strings.ToLower(fileType) != "pdf" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	rc, _, _, err := s.store.Download(ctx, filePath)
+	if err != nil {
+		log.Printf("[Metadata] failed to download book %s for metadata: %v", bookID, err)
+		return
+	}
+	defer rc.Close()
+
+	tmpFile, err := os.CreateTemp("", "readthrough-meta-*.pdf")
+	if err != nil {
+		log.Printf("[Metadata] failed to create temp file: %v", err)
+		return
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := io.Copy(tmpFile, rc); err != nil {
+		tmpFile.Close()
+		log.Printf("[Metadata] failed to copy book %s to temp file: %v", bookID, err)
+		return
+	}
+	tmpFile.Close()
+
+	meta, err := utils.ExtractPDFMetadata(tmpPath)
+	if err != nil {
+		log.Printf("[Metadata] failed to extract metadata for book %s: %v", bookID, err)
+		return
+	}
+
+	if err := s.bookRepo.UpdateMetadata(ctx, bookID, meta.TotalPages, meta.TOCJSON); err != nil {
+		log.Printf("[Metadata] failed to save metadata for book %s: %v", bookID, err)
+		return
+	}
+	log.Printf("[Metadata] successfully extracted and saved metadata for book %s (pages: %d, toc entries: %d)",
+		bookID, meta.TotalPages, len(meta.Items))
 }
 
 func (s *BookService) DownloadBook(ctx context.Context, key string) (io.ReadCloser, int64, string, error) {

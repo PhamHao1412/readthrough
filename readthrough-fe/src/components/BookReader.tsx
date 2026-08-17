@@ -18,6 +18,7 @@ export interface Book {
   current_page: number;
   epub_cfi: string;
   total_pages: number;
+  toc?: string;
   /** Async upload state: "uploading" | "ready" | "failed" */
   upload_status?: string;
   /** Upload progress 0-100, valid while upload_status === "uploading" */

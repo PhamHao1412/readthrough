@@ -17,6 +17,8 @@ type IBookRepository interface {
 	UpdateSize(ctx context.Context, id uuid.UUID, userID uuid.UUID, size int64) error
 	// UpdateUploadStatus sets upload_status and upload_progress on a book record.
 	UpdateUploadStatus(ctx context.Context, id uuid.UUID, status string, progress int) error
+	// UpdateMetadata sets total_pages and toc on a book record.
+	UpdateMetadata(ctx context.Context, id uuid.UUID, totalPages int, toc string) error
 	// MarkOrphanedUploadsFailed marks any book stuck in "uploading" status as "failed".
 	// Called on server startup to clean up uploads that were interrupted by a restart.
 	MarkOrphanedUploadsFailed(ctx context.Context) error
@@ -82,6 +84,20 @@ func (r *BookRepository) UpdateUploadStatus(ctx context.Context, id uuid.UUID, s
 			"upload_status":   status,
 			"upload_progress": progress,
 		}).Error
+}
+
+func (r *BookRepository) UpdateMetadata(ctx context.Context, id uuid.UUID, totalPages int, toc string) error {
+	updates := map[string]interface{}{}
+	if totalPages > 0 {
+		updates["total_pages"] = totalPages
+	}
+	if toc != "" {
+		updates["toc"] = toc
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&entity.Book{}).Where("id = ?", id).Updates(updates).Error
 }
 
 func (r *BookRepository) MarkOrphanedUploadsFailed(ctx context.Context) error {

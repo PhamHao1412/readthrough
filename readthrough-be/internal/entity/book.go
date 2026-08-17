@@ -14,6 +14,7 @@ type Book struct {
 	CurrentPage int       `gorm:"column:current_page;type:integer;not null;default:1" json:"current_page"`
 	EpubCFI     string    `gorm:"column:epub_cfi;type:text;default:''" json:"epub_cfi"`
 	TotalPages  int       `gorm:"column:total_pages;type:integer;not null;default:0" json:"total_pages"`
+	TOC         string    `gorm:"column:toc;type:text;default:''" json:"toc"`
 	// Async upload tracking
 	// UploadStatus: "uploading" → file is being transferred to cloud storage
 	//               "ready"     → file is available and the book can be opened
