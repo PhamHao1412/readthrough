@@ -1,29 +1,112 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Copy, Check, X, AlertTriangle, Volume2, Sparkles } from 'lucide-react';
+import { Copy, Check, X, AlertTriangle, Volume2, Sparkles, Star } from 'lucide-react';
 import { formatUrl } from '../context/AuthContext';
 
 interface TranslationBottomSheetProps {
   text: string;
   onClose: () => void;
   contextSentence?: string;
+  bookId?: string;
   bookTitle?: string;
   bookAuthor?: string;
   pageNumber?: number;
+  bookVocab?: any[];
+  onVocabularySaved?: () => void;
 }
 
 export const TranslationBottomSheet: React.FC<TranslationBottomSheetProps> = ({
   text,
   onClose,
   contextSentence,
+  bookId,
   bookTitle,
   bookAuthor,
   pageNumber,
+  bookVocab,
+  onVocabularySaved,
 }) => {
   const [activeTab, setActiveTab] = useState<'translate' | 'explain'>('translate');
   const [translatedData, setTranslatedData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
+
+  // Saved Vocabulary state
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [saving, setSaving] = useState<boolean>(false);
+
+  // Sync savedId from bookVocab or reset when text changes
+  useEffect(() => {
+    if (bookVocab && text) {
+      const match = bookVocab.find(
+        v => v.original_text?.trim().toLowerCase() === text.trim().toLowerCase()
+      );
+      setSavedId(match ? match.id : null);
+    } else {
+      setSavedId(null);
+    }
+  }, [text, bookVocab]);
+
+  const handleClose = () => {
+    window.getSelection()?.removeAllRanges();
+    window.dispatchEvent(new CustomEvent('readthrough-clear-selection'));
+    onClose();
+  };
+
+  const handleToggleSave = async () => {
+    if (!translatedData || !bookId || saving) return;
+    setSaving(true);
+    try {
+      const token = localStorage.getItem('readthrough_access_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      if (savedId) {
+        // Delete from notebook
+        const res = await fetch(formatUrl(`/api/v1/vocabularies/${savedId}`), {
+          method: 'DELETE',
+          headers,
+        });
+        if (res.ok) {
+          setSavedId(null);
+          onVocabularySaved?.();
+        } else {
+          alert('Failed to remove vocabulary.');
+        }
+      } else {
+        // Save to notebook
+        const res = await fetch(formatUrl('/api/v1/vocabularies'), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            book_id: bookId,
+            original_text: text.trim(),
+            translated_text: translatedData.translatedText,
+            ipa: translatedData.phonetic || '',
+            part_of_speech: translatedData.partsOfSpeech?.[0]?.partOfSpeech || '',
+            context_sentence: contextSentence || '',
+            audio_url: translatedData.audioUrl || '',
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.succeeded && json.data?.id) {
+            setSavedId(json.data.id);
+            onVocabularySaved?.();
+          } else {
+            throw new Error(json.message);
+          }
+        } else {
+          throw new Error('Failed to save vocabulary');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update vocabulary.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const [explainState, setExplainState] = useState<'idle' | 'loading' | 'streaming' | 'done' | 'error'>('idle');
   const [explanation, setExplanation] = useState<string>('');
@@ -136,7 +219,7 @@ export const TranslationBottomSheet: React.FC<TranslationBottomSheetProps> = ({
   };
 
   return (
-    <div className="mobile-bottom-sheet-backdrop" onClick={onClose}>
+    <div className="mobile-bottom-sheet-backdrop" onClick={handleClose}>
       <div className="mobile-bottom-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="mobile-sheet-drag-handle" />
 
@@ -145,9 +228,21 @@ export const TranslationBottomSheet: React.FC<TranslationBottomSheetProps> = ({
             <Sparkles size={18} style={{ color: 'var(--accent)' }} />
             <span>AI Assistant</span>
           </div>
-          <button className="mobile-sheet-close-btn" onClick={onClose}>
-            <X size={18} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {bookId && translatedData && !loading && !error && activeTab === 'translate' && (
+              <button
+                className={`tooltip-save-btn ${savedId ? 'saved' : ''} ${saving ? 'saving' : ''}`}
+                onClick={handleToggleSave}
+                disabled={saving}
+                title={savedId ? "Remove from vocabulary notebook" : "Save to vocabulary notebook"}
+              >
+                <Star size={18} fill={savedId ? "currentColor" : "none"} />
+              </button>
+            )}
+            <button className="mobile-sheet-close-btn" onClick={handleClose}>
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Copy, Check, X, AlertTriangle, Volume2 } from 'lucide-react';
+import { Copy, Check, X, AlertTriangle, Volume2, Star } from 'lucide-react';
 import { formatUrl } from '../context/AuthContext';
 
 interface TranslationTooltipProps {
@@ -8,9 +8,12 @@ interface TranslationTooltipProps {
   y: number;
   onClose: () => void;
   contextSentence?: string;
+  bookId?: string;
   bookTitle?: string;
   bookAuthor?: string;
   pageNumber?: number;
+  bookVocab?: any[];
+  onVocabularySaved?: () => void;
 }
 
 interface DefinitionInfo {
@@ -37,9 +40,12 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
   y,
   onClose,
   contextSentence,
+  bookId,
   bookTitle,
   bookAuthor,
   pageNumber,
+  bookVocab,
+  onVocabularySaved,
 }) => {
   const [activeTab, setActiveTab] = useState<'translate' | 'explain'>('translate');
 
@@ -48,6 +54,22 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
+
+  // Saved Vocabulary state
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [saving, setSaving] = useState<boolean>(false);
+
+  // Sync savedId from bookVocab or reset when text changes
+  useEffect(() => {
+    if (bookVocab && text) {
+      const match = bookVocab.find(
+        v => v.original_text?.trim().toLowerCase() === text.trim().toLowerCase()
+      );
+      setSavedId(match ? match.id : null);
+    } else {
+      setSavedId(null);
+    }
+  }, [text, bookVocab]);
 
   // Explain Tab state — single state machine
   const [explainState, setExplainState] = useState<ExplainState>('idle');
@@ -318,17 +340,80 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
     };
   }, [activeTab, text, contextSentence, bookTitle, bookAuthor, pageNumber, scrollToBottom]);
 
+  const handleClose = useCallback(() => {
+    window.getSelection()?.removeAllRanges();
+    window.dispatchEvent(new CustomEvent('readthrough-clear-selection'));
+    onClose();
+  }, [onClose]);
+
+  const handleToggleSave = async () => {
+    if (!translatedData || !bookId || saving) return;
+    setSaving(true);
+    try {
+      const token = localStorage.getItem('readthrough_access_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      if (savedId) {
+        // Delete from notebook
+        const res = await fetch(formatUrl(`/api/v1/vocabularies/${savedId}`), {
+          method: 'DELETE',
+          headers,
+        });
+        if (res.ok) {
+          setSavedId(null);
+          onVocabularySaved?.();
+        } else {
+          alert('Failed to remove vocabulary.');
+        }
+      } else {
+        // Save to notebook
+        const res = await fetch(formatUrl('/api/v1/vocabularies'), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            book_id: bookId,
+            original_text: text.trim(),
+            translated_text: translatedData.translatedText,
+            ipa: translatedData.phonetic || '',
+            part_of_speech: translatedData.partsOfSpeech?.[0]?.partOfSpeech || '',
+            context_sentence: contextSentence || '',
+            audio_url: translatedData.audioUrl || '',
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.succeeded && json.data?.id) {
+            setSavedId(json.data.id);
+            onVocabularySaved?.();
+          } else {
+            throw new Error(json.message);
+          }
+        } else {
+          throw new Error('Failed to save vocabulary');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update vocabulary.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Click outside to close
   useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
-      if (tooltipRef.current && !tooltipRef.current.contains(e.target as Node)) onClose();
+      if (tooltipRef.current && !tooltipRef.current.contains(e.target as Node)) {
+        handleClose();
+      }
     };
     const timer = setTimeout(() => document.addEventListener('mousedown', handleOutside), 100);
     return () => {
       clearTimeout(timer);
       document.removeEventListener('mousedown', handleOutside);
     };
-  }, [onClose]);
+  }, [handleClose]);
 
   const getPosition = (): React.CSSProperties => {
     const width = Math.min(400, window.innerWidth - 32);
@@ -531,9 +616,21 @@ export const TranslationTooltip: React.FC<TranslationTooltipProps> = ({
       {/* Header */}
       <div className="tooltip-header" onMouseDown={handleHeaderMouseDown}>
         <span className="tooltip-title">✦ Readthrough Assistant</span>
-        <button className="tooltip-close" onClick={onClose}>
-          <X size={14} />
-        </button>
+        <div className="tooltip-header-actions">
+          {bookId && translatedData && !loading && !error && activeTab === 'translate' && (
+            <button
+              className={`tooltip-save-btn ${savedId ? 'saved' : ''} ${saving ? 'saving' : ''}`}
+              onClick={handleToggleSave}
+              disabled={saving}
+              title={savedId ? "Remove from vocabulary notebook" : "Save to vocabulary notebook"}
+            >
+              <Star size={15} fill={savedId ? "currentColor" : "none"} />
+            </button>
+          )}
+          <button className="tooltip-close" onClick={handleClose} title="Close">
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}

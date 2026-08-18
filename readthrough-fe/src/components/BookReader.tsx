@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useEffect, useRef, useMemo } from 'react';
-import { ArrowLeft, BookOpen, Copy, Check, AlertTriangle, Languages, Sparkles, X, Coffee, Sun, Moon, Star, Trash2, List, ChevronRight, Volume2, ChevronDown, ChevronUp, Settings, ChevronLeft } from 'lucide-react';
+import { ArrowLeft, BookOpen, Copy, Check, AlertTriangle, Languages, Sparkles, X, Coffee, Sun, Moon, Star, Trash2, List, ChevronRight, Volume2, ChevronDown, ChevronUp, Settings, ChevronLeft, Zap } from 'lucide-react';
 import { PdfViewer } from './PdfViewer';
 import { EpubViewer } from './EpubViewer';
 import { TxtViewer } from './TxtViewer';
@@ -844,10 +844,14 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   }, [book.id]);
 
   useEffect(() => {
-    if (sidebarOpen && sidebarTab === 'vocab') {
-      fetchBookVocabularies();
-    }
-  }, [sidebarOpen, sidebarTab, fetchBookVocabularies]);
+    fetchBookVocabularies();
+  }, [fetchBookVocabularies]);
+
+  const handleCloseTooltip = useCallback(() => {
+    setActiveSelection(null);
+    window.getSelection()?.removeAllRanges();
+    window.dispatchEvent(new CustomEvent('readthrough-clear-selection'));
+  }, []);
 
   const toggleSaveVocabulary = useCallback(async (entry: TranslationEntry) => {
     if (!entry.translated || entry.loading || entry.saving) return;
@@ -1360,6 +1364,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           </div>
           <span className={`reader-type-badge type-${book.file_type}`}>{book.file_type.toUpperCase()}</span>
           <button
+            className={`theme-btn rt-mode-toggle-btn ${readThroughActive ? 'active' : ''}`}
+            onClick={() => setReadThroughActive(!readThroughActive)}
+            title={readThroughActive ? "Tắt chế độ ReadThrough (Kindle Mode)" : "Bật chế độ ReadThrough (Kindle Mode)"}
+          >
+            <Zap size={15} fill={readThroughActive ? "currentColor" : "none"} />
+          </button>
+          <button
             className="theme-btn"
             onClick={onThemeChange}
             title="Switch theme (Light/Dark/Sepia)"
@@ -1367,13 +1378,6 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
             {theme === 'light' && <Moon size={15} />}
             {theme === 'dark' && <Coffee size={15} />}
             {theme === 'sepia' && <Sun size={15} />}
-          </button>
-          <button
-            className={`theme-btn ${readThroughActive ? 'active' : ''}`}
-            onClick={() => setReadThroughActive(!readThroughActive)}
-            title="Kindle Mode (Read Through)"
-          >
-            <BookOpen size={15} />
           </button>
           <button
             className={`sidebar-toggle-btn ${sidebarOpen ? 'active' : ''}`}
@@ -1805,6 +1809,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
               <button className={`rt-btn ${showRtToc ? 'active' : ''}`} onClick={() => { setShowRtToc(!showRtToc); setShowRtSettings(false); }} title="Table of Contents">
                 <List size={18} />
               </button>
+              <button
+                className="rt-btn rt-toggle-active-btn active"
+                onClick={() => setReadThroughActive(false)}
+                title="Tắt chế độ ReadThrough (Trở về chế độ thường)"
+              >
+                <Zap size={18} fill="currentColor" />
+              </button>
               <button className={`rt-btn ${showRtSettings ? 'active' : ''}`} onClick={() => { setShowRtSettings(!showRtSettings); setShowRtToc(false); }} title="Text settings">
                 <Settings size={18} />
               </button>
@@ -1926,22 +1937,28 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
         window.innerWidth <= 768 ? (
           <TranslationBottomSheet
             text={activeSelection.text}
-            onClose={() => setActiveSelection(null)}
+            onClose={handleCloseTooltip}
             contextSentence={getSentenceContext(activeSelection.text)}
+            bookId={book.id}
             bookTitle={book.title}
             bookAuthor={book.author}
             pageNumber={currentPage}
+            bookVocab={bookVocab}
+            onVocabularySaved={fetchBookVocabularies}
           />
         ) : (
           <TranslationTooltip
             text={activeSelection.text}
             x={activeSelection.x}
             y={activeSelection.y}
-            onClose={() => setActiveSelection(null)}
+            onClose={handleCloseTooltip}
             contextSentence={getSentenceContext(activeSelection.text)}
+            bookId={book.id}
             bookTitle={book.title}
             bookAuthor={book.author}
             pageNumber={currentPage}
+            bookVocab={bookVocab}
+            onVocabularySaved={fetchBookVocabularies}
           />
         )
       )}

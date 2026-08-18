@@ -504,7 +504,7 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
         'line-height': `${activeLineHeight} !important`,
         'font-size': `${activeFontSize}% !important`,
         'color': '#2b2b2d !important',
-        'background-color': activeBgColor || '#ffffff !important',
+        'background-color': activeBgColor || '#f5f4f0 !important',
         'padding': `${activePadding} !important`,
       },
       p: {
@@ -519,7 +519,7 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
         'line-height': `${activeLineHeight} !important`,
         'font-size': `${activeFontSize}% !important`,
         'color': '#e0deda !important',
-        'background-color': activeBgColor || '#2a2926 !important',
+        'background-color': activeBgColor || '#1c1b18 !important',
         'padding': `${activePadding} !important`,
       },
       p: {
@@ -534,7 +534,7 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
         'line-height': `${activeLineHeight} !important`,
         'font-size': `${activeFontSize}% !important`,
         'color': '#3b2c1b !important',
-        'background-color': activeBgColor || '#faf6eb !important',
+        'background-color': activeBgColor || '#f4ecd8 !important',
         'padding': `${activePadding} !important`,
       },
       p: {

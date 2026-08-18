@@ -170,6 +170,18 @@ export const TxtViewer: React.FC<TxtViewerProps> = React.memo(({
     }
   }, [currentPage]);
 
+  // Clear selection on custom event
+  useEffect(() => {
+    const handleClearSelection = () => {
+      window.getSelection()?.removeAllRanges();
+    };
+
+    window.addEventListener('readthrough-clear-selection', handleClearSelection);
+    return () => {
+      window.removeEventListener('readthrough-clear-selection', handleClearSelection);
+    };
+  }, []);
+
   // Handle next/prev page events from BookReader
   useEffect(() => {
     const handleNext = () => {

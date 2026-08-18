@@ -862,6 +862,18 @@ export const MdViewer: React.FC<MdViewerProps> = React.memo(({
     localStorage.setItem(`readthrough_font_family_md_${bookId}`, fontFamily);
   }, [fontFamily, bookId]);
 
+  // Clear selection on custom event
+  useEffect(() => {
+    const handleClearSelection = () => {
+      window.getSelection()?.removeAllRanges();
+    };
+
+    window.addEventListener('readthrough-clear-selection', handleClearSelection);
+    return () => {
+      window.removeEventListener('readthrough-clear-selection', handleClearSelection);
+    };
+  }, []);
+
   // Listen to initialCfi or currentCfi changes to scroll to headings
   useEffect(() => {
     if (initialCfi && !loading && viewMode !== 'editor') {
