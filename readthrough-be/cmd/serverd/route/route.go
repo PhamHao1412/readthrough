@@ -16,6 +16,7 @@ func V1Router(
 	vocabHandler *v1.VocabularyHandler,
 	authHandler *v1.AuthHandler,
 	aiHandler *v1.AIHandler,
+	readingCompanionHandler *v1.ReadingCompanionHandler,
 	bookmarkHandler *v1.BookmarkHandler,
 	limiter *middleware.RateLimiter,
 	aiCreditManager *middleware.AICreditManager,
@@ -43,6 +44,8 @@ func V1Router(
 		api.GET("/health", healthHandler.HealthCheck)
 		api.POST("/translate", translateHandler.Translate)
 		api.POST("/explain", aiHandler.Explain)
+		api.POST("/ai/companion", readingCompanionHandler.CompanionAction)
+		api.POST("/ai/companion/stream", readingCompanionHandler.CompanionActionStream)
 
 		// Auth Routes (Public)
 		auth := api.Group("/auth")

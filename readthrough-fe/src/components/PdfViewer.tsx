@@ -12,6 +12,7 @@ interface PdfViewerProps {
   onPageChange: (page: number, total: number) => void;
   onSelection: (text: string, x?: number, y?: number) => void;
   onOutlineLoaded?: (outline: any[]) => void;
+  onPdfLoaded?: (pdfDoc: any) => void;
   readThroughActive?: boolean;
   rtSettings?: {
     fontFamily: string;
@@ -101,6 +102,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
   onPageChange,
   onSelection,
   onOutlineLoaded,
+  onPdfLoaded,
   readThroughActive = false,
   rtSettings,
 }) => {
@@ -218,6 +220,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
         }).promise;
         if (!active) return;
         setPdf(doc);
+        if (onPdfLoaded) {
+          onPdfLoaded(doc);
+        }
         setTotalPages(doc.numPages);
         const start = initialPage > 0 && initialPage <= doc.numPages ? initialPage : 1;
         setPageNumber(start);

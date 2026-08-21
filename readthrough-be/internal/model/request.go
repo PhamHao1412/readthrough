@@ -68,3 +68,14 @@ type PresignUploadRequest struct {
 	Title       string `json:"title"`
 	Author      string `json:"author"`
 }
+
+type ReadingCompanionRequest struct {
+	BookID       string `json:"book_id" binding:"required"`
+	SectionTitle string `json:"section_title" binding:"required"`
+	Content      string `json:"content" binding:"required"`
+	Action       string `json:"action" binding:"required"` // "summary" | "explain" | "quiz"
+	BookTitle    string `json:"book_title"`
+	BookAuthor   string `json:"book_author"`
+	PageNumber   int    `json:"page_number"`
+	IsChapter    bool   `json:"is_chapter"`
+}

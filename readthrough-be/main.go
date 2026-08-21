@@ -58,7 +58,7 @@ func main() {
 	}
 	//
 	// Auto migrate entities
-	_ = dbConn.AutoMigrate(&entity.Bookmark{})
+	_ = dbConn.AutoMigrate(&entity.Bookmark{}, &entity.AICompanion{})
 
 	// Storage setup (Cloudflare R2 or Local fallback)
 	var store storage.Storage
@@ -83,6 +83,7 @@ func main() {
 	bookmarkRepo := repository.NewBookmarkRepository(dbConn)
 
 	aiExplanationRepo := repository.NewAIExplanationRepository(dbConn)
+	aiCompanionRepo := repository.NewAICompanionRepository(dbConn)
 
 	// Rate Limiter Setup
 	limiter := middleware.NewRateLimiter(cfg.RateLimitCapacity, cfg.RateLimitRate, 1*time.Hour)
@@ -106,6 +107,7 @@ func main() {
 	translateSvc := service.NewTranslateService()
 
 	aiSvc := service.NewAIService(cfg.OpenAIApiKey, cfg.OpenAIModel, aiExplanationRepo)
+	readingCompanionSvc := service.NewReadingCompanionService(cfg.OpenAIApiKey, cfg.OpenAIModel, aiCompanionRepo)
 	vocabSvc := service.NewVocabularyService(vocabRepo)
 	authSvc := service.NewAuthService(userRepo, tokenRepo)
 	bookmarkSvc := service.NewBookmarkService(bookmarkRepo)
@@ -114,13 +116,14 @@ func main() {
 	bookHandler := v1.NewBookHandler(bookSvc)
 	translateHandler := v1.NewTranslateHandler(translateSvc)
 	aiHandler := v1.NewAIHandler(aiSvc, aiCreditManager)
+	readingCompanionHandler := v1.NewReadingCompanionHandler(readingCompanionSvc, aiCreditManager)
 	healthHandler := v1.NewHealthHandler(dbConn)
 	vocabHandler := v1.NewVocabularyHandler(vocabSvc)
 	authHandler := v1.NewAuthHandler(authSvc)
 	bookmarkHandler := v1.NewBookmarkHandler(bookmarkSvc)
 
 	// Router setup
-	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler, aiHandler, bookmarkHandler, limiter, aiCreditManager)
+	route.V1Router(r, bookHandler, translateHandler, healthHandler, vocabHandler, authHandler, aiHandler, readingCompanionHandler, bookmarkHandler, limiter, aiCreditManager)
 
 	log.Printf("%s service running at :%s", cfg.AppName, cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {
