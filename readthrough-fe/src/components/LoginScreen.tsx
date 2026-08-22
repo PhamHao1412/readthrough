@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { BookOpen, User, Mail, Lock, ArrowRight, AlertCircle, Loader2, Sun, Moon, Coffee } from 'lucide-react';
+import { BookOpen, User, Mail, Lock, ArrowRight, AlertCircle, Loader2, Palette } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { ThemeId } from '../utils/themes';
 
 interface LoginScreenProps {
-  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
+  theme: ThemeId;
   onThemeChange: () => void;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ theme, onThemeChange }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({ onThemeChange }) => {
   const { login, signup } = useAuth();
   const [isLogin, setIsLogin] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
@@ -82,11 +83,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ theme, onThemeChange }
         <button
           className="icon-btn theme-toggle"
           onClick={onThemeChange}
-          title="Switch theme (Light/Dark/Sepia)"
+          title="Choose theme presets"
         >
-          {theme === 'light' && <Moon size={17} />}
-          {theme === 'dark' && <Coffee size={17} />}
-          {theme === 'sepia' && <Sun size={17} />}
+          <Palette size={17} />
         </button>
       </header>
 

@@ -219,6 +219,10 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
   // Reset stream states and quiz answers when switching to a completely new section
   useEffect(() => {
     if (prevSectionKeyRef.current !== currentSectionKey) {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       prevSectionKeyRef.current = currentSectionKey;
       setContentMap({});
       setLoadingMap({});
@@ -427,7 +431,7 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
 
   // Auto-trigger active tab action if not already loaded and in companion view
   useEffect(() => {
-    if (viewMode !== 'companion' || activeTab === 'vocab') return;
+    if (viewMode !== 'companion' || activeTab === 'vocab' || isExtracting) return;
     if (
       sectionContent &&
       sectionContent.trim().length > 0 &&
@@ -438,7 +442,7 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
     ) {
       streamAction(activeTab);
     }
-  }, [viewMode, activeTab, sectionContent, contentMap, loadingMap, errorMap, streamAction]);
+  }, [viewMode, activeTab, sectionContent, contentMap, loadingMap, errorMap, isExtracting, streamAction]);
 
 
   const handleCopy = () => {

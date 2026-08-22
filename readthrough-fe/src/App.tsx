@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Sun, Moon, BookOpen, Library, Sparkles, Coffee } from 'lucide-react';
+import { BookOpen, Library, Sparkles, Palette } from 'lucide-react';
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import { BookList } from './components/BookList';
 import { BookReader, Book } from './components/BookReader';
@@ -8,6 +8,8 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { ReadingStatsView } from './components/ReadingStatsView';
 import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
+import { ThemeSelectorModal } from './components/ThemeSelectorModal';
+import { ThemeId, applyTheme } from './utils/themes';
 
 // ── Protected Route Guard ──
 const ProtectedRoute = () => {
@@ -47,12 +49,12 @@ const PublicRoute = () => {
 
 // ── Main Header & Tab Navigation Layout ──
 interface MainLayoutProps {
-  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
+  theme: ThemeId;
   onThemeChange: () => void;
   booksCount: number;
 }
 
-const MainLayout: React.FC<MainLayoutProps> = ({ theme, onThemeChange, booksCount }) => {
+const MainLayout: React.FC<MainLayoutProps> = ({ onThemeChange, booksCount }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
   const activeTab = location.pathname === '/vocab' ? 'vocab' : 'library';
@@ -85,11 +87,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ theme, onThemeChange, booksCoun
           <button
             className="icon-btn"
             onClick={onThemeChange}
-            title="Switch theme (Light/Dark/Sepia)"
+            title="Theme Presets"
           >
-            {theme === 'light' && <Moon size={17} />}
-            {theme === 'dark' && <Coffee size={17} />}
-            {theme === 'sepia' && <Sun size={17} />}
+            <Palette size={17} />
           </button>
 
           {user && (
@@ -140,7 +140,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ theme, onThemeChange, booksCoun
 
 // ── Wrapper to Fetch Book Details by ID from URL ──
 interface BookReaderWrapperProps {
-  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
+  theme: ThemeId;
   onThemeChange: () => void;
 }
 
@@ -222,15 +222,15 @@ function App() {
   const { isAuthenticated, loading: authLoading, fetchWithAuth } = useAuth();
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [theme, setTheme] = useState<'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink'>('dark');
+  const [theme, setTheme] = useState<ThemeId>('dracula');
+  const [themeModalOpen, setThemeModalOpen] = useState<boolean>(false);
   const navigate = useNavigate();
 
   // Load Theme
   useEffect(() => {
-    const savedTheme = localStorage.getItem('theme') as any;
-    const currentTheme = savedTheme || 'dark';
-    setTheme(currentTheme);
-    document.documentElement.setAttribute('data-theme', currentTheme);
+    const savedTheme = (localStorage.getItem('theme') as ThemeId) || 'dracula';
+    setTheme(savedTheme);
+    applyTheme(savedTheme);
   }, []);
 
   // Fetch Library Books
@@ -257,18 +257,13 @@ function App() {
     }
   }, [isAuthenticated]);
 
-  const toggleTheme = () => {
-    let nextTheme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink' = 'light';
-    if (theme === 'light') nextTheme = 'dark';
-    else if (theme === 'dark') nextTheme = 'sepia';
-    else if (theme === 'sepia') nextTheme = 'oled';
-    else if (theme === 'oled') nextTheme = 'mint';
-    else if (theme === 'mint') nextTheme = 'eink';
-    else if (theme === 'eink') nextTheme = 'light';
+  const handleSelectTheme = (newTheme: ThemeId) => {
+    setTheme(newTheme);
+    applyTheme(newTheme);
+  };
 
-    setTheme(nextTheme);
-    document.documentElement.setAttribute('data-theme', nextTheme);
-    localStorage.setItem('theme', nextTheme);
+  const openThemeModal = () => {
+    setThemeModalOpen(true);
   };
 
   const handleDeleteBook = async (bookId: string) => {
@@ -300,61 +295,71 @@ function App() {
   }
 
   return (
-    <Routes>
-      {/* Public Routes */}
-      <Route element={<PublicRoute />}>
-        <Route path="/login" element={<LoginScreen theme={theme} onThemeChange={toggleTheme} />} />
-      </Route>
+    <>
+      <Routes>
+        {/* Public Routes */}
+        <Route element={<PublicRoute />}>
+          <Route path="/login" element={<LoginScreen theme={theme} onThemeChange={openThemeModal} />} />
+        </Route>
 
-      {/* Protected Routes */}
-      <Route element={<ProtectedRoute />}>
-        {/* Routes with Shared Main Header Layout */}
-        <Route element={<MainLayout theme={theme} onThemeChange={toggleTheme} booksCount={books.length} />}>
+        {/* Protected Routes */}
+        <Route element={<ProtectedRoute />}>
+          {/* Routes with Shared Main Header Layout */}
+          <Route element={<MainLayout theme={theme} onThemeChange={openThemeModal} booksCount={books.length} />}>
+            <Route
+              path="/"
+              element={
+                loading && books.length === 0 ? (
+                  <div className="loading-state">
+                    <div className="spinner" />
+                    <span>Opening personal library...</span>
+                  </div>
+                ) : (
+                  <div className="library-view">
+                    <BookList
+                      books={books}
+                      onSelectBook={(book) => navigate(`/books/${book.id}`)}
+                      onUploadSuccess={fetchBooks}
+                      onDeleteBook={handleDeleteBook}
+                    />
+                  </div>
+                )
+              }
+            />
+            <Route
+              path="/vocab"
+              element={
+                <VocabularyManager
+                  books={books}
+                  onSelectBook={(book) => navigate(`/books/${book.id}`)}
+                />
+              }
+            />
+            <Route
+              path="/stats"
+              element={<ReadingStatsView />}
+            />
+          </Route>
+
+          {/* Fullscreen Reader Route */}
           <Route
-            path="/"
-            element={
-              loading && books.length === 0 ? (
-                <div className="loading-state">
-                  <div className="spinner" />
-                  <span>Opening personal library...</span>
-                </div>
-              ) : (
-                <div className="library-view">
-                  <BookList
-                    books={books}
-                    onSelectBook={(book) => navigate(`/books/${book.id}`)}
-                    onUploadSuccess={fetchBooks}
-                    onDeleteBook={handleDeleteBook}
-                  />
-                </div>
-              )
-            }
-          />
-          <Route
-            path="/vocab"
-            element={
-              <VocabularyManager
-                books={books}
-                onSelectBook={(book) => navigate(`/books/${book.id}`)}
-              />
-            }
-          />
-          <Route
-            path="/stats"
-            element={<ReadingStatsView />}
+            path="/books/:id"
+            element={<BookReaderWrapper theme={theme} onThemeChange={openThemeModal} />}
           />
         </Route>
 
-        {/* Fullscreen Reader Route */}
-        <Route
-          path="/books/:id"
-          element={<BookReaderWrapper theme={theme} onThemeChange={toggleTheme} />}
-        />
-      </Route>
+        {/* Catch-all Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
 
-      {/* Catch-all Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      {/* Theme Presets Modal */}
+      <ThemeSelectorModal
+        isOpen={themeModalOpen}
+        onClose={() => setThemeModalOpen(false)}
+        currentTheme={theme}
+        onSelectTheme={handleSelectTheme}
+      />
+    </>
   );
 }
 

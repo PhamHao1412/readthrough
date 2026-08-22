@@ -56,9 +56,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect database: %v", err)
 	}
-	//
-	// Auto migrate entities
-	_ = dbConn.AutoMigrate(&entity.Bookmark{}, &entity.AICompanion{})
 
 	// Storage setup (Cloudflare R2 or Local fallback)
 	var store storage.Storage

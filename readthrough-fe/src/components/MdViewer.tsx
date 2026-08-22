@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Type, Save, Copy, Check, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { ThemeId } from '../utils/themes';
 
 interface MdViewerProps {
   bookId: string;
@@ -9,7 +10,7 @@ interface MdViewerProps {
   onProgressChange: (cfi: string) => void;
   onSelection: (text: string, x?: number, y?: number) => void;
   onOutlineLoaded?: (outline: any[]) => void;
-  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
+  theme: ThemeId;
   readThroughActive?: boolean;
   rtSettings?: {
     fontFamily: string;

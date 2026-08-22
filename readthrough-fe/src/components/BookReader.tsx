@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { ArrowLeft, BookOpen, AlertTriangle, Sparkles, X, Coffee, Sun, Moon, List, ChevronRight, Settings, ChevronLeft, Zap } from 'lucide-react';
+import { ArrowLeft, BookOpen, AlertTriangle, Sparkles, X, List, ChevronRight, Settings, ChevronLeft, Zap, Palette } from 'lucide-react';
 import { PdfViewer } from './PdfViewer';
 import { EpubViewer } from './EpubViewer';
 import { TxtViewer } from './TxtViewer';
@@ -8,6 +8,7 @@ import { TranslationTooltip } from './TranslationTooltip';
 import { TranslationBottomSheet } from './TranslationBottomSheet';
 import { AIReadingCompanionPanel } from './AIReadingCompanionPanel';
 import { extractPdfSectionText, extractPdfChapterOverviewText, findSectionPageRange, extractMarkdownSectionText } from '../utils/sectionExtractor';
+import { ThemeId } from '../utils/themes';
 
 import { useAuth } from '../context/AuthContext';
 
@@ -29,10 +30,9 @@ export interface Book {
 }
 
 interface BookReaderProps {
-
   book: Book;
   onBack: () => void;
-  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
+  theme: ThemeId;
   onThemeChange: () => void;
 }
 
@@ -206,6 +206,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   const [companionIsChapter, setCompanionIsChapter] = useState<boolean>(false);
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const extractionSeqRef = useRef<number>(0);
 
   // Reset outline and navigation states when switching books
   useEffect(() => {
@@ -237,6 +238,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
   }, [book.id, fetchWithAuth]);
 
   const openCompanionForSection = useCallback(async (item?: any, initialTab: 'summary' | 'explain' | 'quiz' | 'vocab' = 'summary') => {
+    const seq = ++extractionSeqRef.current;
 
     let targetTitle = item?.title || '';
     let targetPage = typeof item?.target === 'number' ? item.target : currentPage;
@@ -252,6 +254,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
     setCompanionPageNumber(targetPage || currentPage);
     setCompanionTab(initialTab);
     setCompanionIsChapter(isChapter);
+    setCompanionContent('');
     setSidebarOpen(true);
     setIsExtracting(true);
 
@@ -292,9 +295,10 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       text = await extractPdfSectionText(pdfDoc, targetPage || currentPage, Math.min((targetPage || currentPage) + 3, book.total_pages || 10), targetTitle);
     }
 
-
-    setCompanionContent(text);
-    setIsExtracting(false);
+    if (extractionSeqRef.current === seq) {
+      setCompanionContent(text);
+      setIsExtracting(false);
+    }
   }, [book, pdfDoc, outline, currentPage, fetchWithAuth]);
 
 
@@ -805,11 +809,9 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
           <button
             className="theme-btn"
             onClick={onThemeChange}
-            title="Switch theme (Light/Dark/Sepia)"
+            title="Theme Presets"
           >
-            {theme === 'light' && <Moon size={15} />}
-            {theme === 'dark' && <Coffee size={15} />}
-            {theme === 'sepia' && <Sun size={15} />}
+            <Palette size={15} />
           </button>
           <button
             className={`sidebar-toggle-btn ${sidebarOpen ? 'active' : ''}`}
@@ -973,13 +975,8 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
               <button className={`rt-btn ${showRtSettings ? 'active' : ''}`} onClick={() => { setShowRtSettings(!showRtSettings); setShowRtToc(false); }} title="Text settings">
                 <Settings size={18} />
               </button>
-              <button className="rt-btn" onClick={onThemeChange} title={`Theme: ${theme}`}>
-                {theme === 'light' && <Moon size={18} />}
-                {theme === 'dark' && <Coffee size={18} />}
-                {theme === 'sepia' && <Sun size={18} />}
-                {theme === 'oled' && <Moon size={18} style={{ color: '#f97316' }} />}
-                {theme === 'mint' && <Sun size={18} style={{ color: '#52b788' }} />}
-                {theme === 'eink' && <BookOpen size={18} />}
+              <button className="rt-btn" onClick={onThemeChange} title="Theme Presets">
+                <Palette size={18} />
               </button>
             </div>
           </div>
@@ -1008,6 +1005,22 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
       {/* Kindle Mode Settings Panel */}
       {readThroughActive && showRtSettings && (
         <div className="rt-settings-panel">
+          <div className="rt-settings-section">
+            <label>Theme Preset</label>
+            <div className="rt-settings-options font-options">
+              <button
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                onClick={() => {
+                  setShowRtSettings(false);
+                  onThemeChange();
+                }}
+              >
+                <Palette size={14} />
+                <span>Select Theme Preset...</span>
+              </button>
+            </div>
+          </div>
+
           <div className="rt-settings-section">
             <label>Font Family</label>
             <div className="rt-settings-options font-options">

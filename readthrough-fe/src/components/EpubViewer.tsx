@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Epub from 'epubjs';
 import { ChevronLeft, ChevronRight, Type } from 'lucide-react';
+import { ThemeId, THEME_PRESETS } from '../utils/themes';
 
 interface EpubViewerProps {
   bookId: string;
@@ -8,7 +9,7 @@ interface EpubViewerProps {
   initialCfi: string;
   onProgressChange: (cfi: string) => void;
   onSelection: (text: string, x?: number, y?: number) => void;
-  theme: 'light' | 'dark' | 'sepia' | 'oled' | 'mint' | 'eink';
+  theme: ThemeId;
   onOutlineLoaded?: (outline: any[]) => void;
   readThroughActive?: boolean;
   rtSettings?: {
@@ -498,94 +499,21 @@ export const EpubViewer: React.FC<EpubViewerProps> = React.memo(({
 
     const activeBgColor = readThroughActive ? 'transparent !important' : '';
 
-    renditionRef.current.themes.register('light', {
-      body: {
-        'font-family': `${activeFontFamily} !important`,
-        'line-height': `${activeLineHeight} !important`,
-        'font-size': `${activeFontSize}% !important`,
-        'color': '#2b2b2d !important',
-        'background-color': activeBgColor || '#f5f4f0 !important',
-        'padding': `${activePadding} !important`,
-      },
-      p: {
-        'margin-bottom': '1.3em !important',
-        'text-align': 'left !important',
-      }
-    });
-
-    renditionRef.current.themes.register('dark', {
-      body: {
-        'font-family': `${activeFontFamily} !important`,
-        'line-height': `${activeLineHeight} !important`,
-        'font-size': `${activeFontSize}% !important`,
-        'color': '#e0deda !important',
-        'background-color': activeBgColor || '#1c1b18 !important',
-        'padding': `${activePadding} !important`,
-      },
-      p: {
-        'margin-bottom': '1.3em !important',
-        'text-align': 'left !important',
-      }
-    });
-
-    renditionRef.current.themes.register('sepia', {
-      body: {
-        'font-family': `${activeFontFamily} !important`,
-        'line-height': `${activeLineHeight} !important`,
-        'font-size': `${activeFontSize}% !important`,
-        'color': '#3b2c1b !important',
-        'background-color': activeBgColor || '#f4ecd8 !important',
-        'padding': `${activePadding} !important`,
-      },
-      p: {
-        'margin-bottom': '1.3em !important',
-        'text-align': 'left !important',
-      }
-    });
-
-    renditionRef.current.themes.register('oled', {
-      body: {
-        'font-family': `${activeFontFamily} !important`,
-        'line-height': `${activeLineHeight} !important`,
-        'font-size': `${activeFontSize}% !important`,
-        'color': '#e5e5e5 !important',
-        'background-color': activeBgColor || '#000000 !important',
-        'padding': `${activePadding} !important`,
-      },
-      p: {
-        'margin-bottom': '1.3em !important',
-        'text-align': 'left !important',
-      }
-    });
-
-    renditionRef.current.themes.register('mint', {
-      body: {
-        'font-family': `${activeFontFamily} !important`,
-        'line-height': `${activeLineHeight} !important`,
-        'font-size': `${activeFontSize}% !important`,
-        'color': '#1b4332 !important',
-        'background-color': activeBgColor || '#e8f5e9 !important',
-        'padding': `${activePadding} !important`,
-      },
-      p: {
-        'margin-bottom': '1.3em !important',
-        'text-align': 'left !important',
-      }
-    });
-
-    renditionRef.current.themes.register('eink', {
-      body: {
-        'font-family': `${activeFontFamily} !important`,
-        'line-height': `${activeLineHeight} !important`,
-        'font-size': `${activeFontSize}% !important`,
-        'color': '#000000 !important',
-        'background-color': activeBgColor || '#ffffff !important',
-        'padding': `${activePadding} !important`,
-      },
-      p: {
-        'margin-bottom': '1.3em !important',
-        'text-align': 'left !important',
-      }
+    THEME_PRESETS.forEach((preset) => {
+      renditionRef.current.themes.register(preset.id, {
+        body: {
+          'font-family': `${activeFontFamily} !important`,
+          'line-height': `${activeLineHeight} !important`,
+          'font-size': `${activeFontSize}% !important`,
+          'color': `${preset.foreground} !important`,
+          'background-color': activeBgColor || `${preset.background} !important`,
+          'padding': `${activePadding} !important`,
+        },
+        p: {
+          'margin-bottom': '1.3em !important',
+          'text-align': 'left !important',
+        },
+      });
     });
 
     renditionRef.current.themes.select(theme);
