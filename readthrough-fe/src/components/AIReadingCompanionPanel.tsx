@@ -242,12 +242,12 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
             || localStorage.getItem(`reread_ai_${bookId}_${sectionTitle || `p_${pageNumber}`}_${act}`);
           if (cached) {
             localLoaded[act] = cached;
-            checkedCacheKeysRef.current.add(`${bookId}:${sectionTitle || pageNumber}:${act}`);
           }
         } catch {
           // ignore
         }
       }
+
 
       setContentMap(localLoaded);
       setLoadingMap({});
@@ -501,9 +501,21 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
           } catch {
             // ignore
           }
+          setContentMap(prev => ({ ...prev, [action]: json.data.content }));
+        } else if (json?.data && json.data.has_cache === false) {
+          // If server reports no cache in database (e.g. record deleted from DB), invalidate stale local cache
+          try {
+            localStorage.removeItem(getLocalCompanionKey(action));
+            localStorage.removeItem(`reread_ai_${bookId}_${sectionTitle || `p_${pageNumber}`}_${action}`);
+            localStorage.removeItem(`readthrough_ai_${bookId}_${sectionTitle || `p_${pageNumber}`}_${action}`);
+          } catch {
+            // ignore
+          }
           setContentMap(prev => {
-            if (prev[action]) return prev;
-            return { ...prev, [action]: json.data.content };
+            if (!prev[action]) return prev;
+            const next = { ...prev };
+            delete next[action];
+            return next;
           });
         }
       }
@@ -514,20 +526,20 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
     }
   }, [bookId, sectionTitle, pageNumber, currentPage, sectionContent, fetchWithAuth, getLocalCompanionKey]);
 
-  // When panel switches to companion, active tab changes, or section changes -> check and display existing cache immediately
+  // When panel switches to companion, active tab changes, or section changes -> verify / load existing cache with server
   useEffect(() => {
     if (viewMode !== 'companion' || activeTab === 'vocab' || isExtracting) return;
     const cacheKey = `${bookId}:${sectionTitle || pageNumber}:${activeTab}`;
     if (
       sectionContent &&
       sectionContent.trim().length > 0 &&
-      !contentMap[activeTab] &&
       !loadingMap[activeTab] &&
       !checkedCacheKeysRef.current.has(cacheKey)
     ) {
       checkAndLoadCache(activeTab);
     }
-  }, [viewMode, activeTab, sectionContent, contentMap, loadingMap, isExtracting, checkAndLoadCache, bookId, sectionTitle, pageNumber]);
+  }, [viewMode, activeTab, sectionContent, loadingMap, isExtracting, checkAndLoadCache, bookId, sectionTitle, pageNumber]);
+
 
 
 

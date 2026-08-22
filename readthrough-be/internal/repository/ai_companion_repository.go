@@ -26,11 +26,19 @@ func (r *AICompanionRepository) Create(ctx context.Context, companion *entity.AI
 
 func (r *AICompanionRepository) Get(ctx context.Context, bookID, sectionTitle, action, contentHash string) (*entity.AICompanion, error) {
 	var item entity.AICompanion
-	query := r.db.WithContext(ctx).Where("book_id = ? AND section_title = ? AND action = ?", bookID, sectionTitle, action)
 	if contentHash != "" {
-		query = query.Where("content_hash = ?", contentHash)
+		// 1. Try exact content hash match first
+		err := r.db.WithContext(ctx).
+			Where("book_id = ? AND section_title = ? AND action = ? AND content_hash = ?", bookID, sectionTitle, action, contentHash).
+			Order("created_at desc").First(&item).Error
+		if err == nil {
+			return &item, nil
+		}
 	}
-	err := query.Order("created_at desc").First(&item).Error
+	// 2. Fallback to latest analysis for the same book, section title, and action (guarantees cross-device sync)
+	err := r.db.WithContext(ctx).
+		Where("book_id = ? AND section_title = ? AND action = ?", bookID, sectionTitle, action).
+		Order("created_at desc").First(&item).Error
 	if err != nil {
 		return nil, err
 	}
