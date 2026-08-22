@@ -7,7 +7,14 @@ import { MdViewer } from './MdViewer';
 import { TranslationTooltip } from './TranslationTooltip';
 import { TranslationBottomSheet } from './TranslationBottomSheet';
 import { AIReadingCompanionPanel } from './AIReadingCompanionPanel';
-import { extractPdfSectionText, extractPdfChapterOverviewText, findSectionPageRange, extractMarkdownSectionText } from '../utils/sectionExtractor';
+import {
+  extractPdfSectionText,
+  extractPdfChapterOverviewText,
+  findSectionPageRange,
+  extractMarkdownSectionText,
+  isChapterOrMajorContainer,
+} from '../utils/sectionExtractor';
+
 import { ThemeId } from '../utils/themes';
 
 import { useAuth } from '../context/AuthContext';
@@ -242,8 +249,8 @@ export const BookReader: React.FC<BookReaderProps> = ({ book, onBack, theme, onT
 
     let targetTitle = item?.title || '';
     let targetPage = typeof item?.target === 'number' ? item.target : currentPage;
-    const isTopLevelChapter = Array.isArray(outline) && outline.some(root => root === item || (root.title === item?.title && root.target === item?.target));
-    const isChapter = isTopLevelChapter && Boolean(item?.children && item.children.length > 0);
+    const isChapter = isChapterOrMajorContainer(item, outline);
+
 
 
     if (!targetTitle) {

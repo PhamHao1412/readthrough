@@ -29,6 +29,8 @@ import {
 
 
 import { useAuth } from '../context/AuthContext';
+import { isChapterOrMajorContainer } from '../utils/sectionExtractor';
+
 
 export interface AIReadingCompanionPanelProps {
   bookId: string;
@@ -429,20 +431,8 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
   }, [bookId, sectionTitle, sectionContent, bookTitle, bookAuthor, pageNumber, currentPage, fetchWithAuth, scrollToBottom]);
 
 
-  // Auto-trigger active tab action if not already loaded and in companion view
-  useEffect(() => {
-    if (viewMode !== 'companion' || activeTab === 'vocab' || isExtracting) return;
-    if (
-      sectionContent &&
-      sectionContent.trim().length > 0 &&
-      !contentMap[activeTab] &&
-      !loadingMap[activeTab] &&
-      !errorMap[activeTab] &&
-      !hasAttemptedRef.current[activeTab]
-    ) {
-      streamAction(activeTab);
-    }
-  }, [viewMode, activeTab, sectionContent, contentMap, loadingMap, errorMap, isExtracting, streamAction]);
+  // On-demand streaming: user clicks the generate button to start analysis
+
 
 
   const handleCopy = () => {
@@ -590,16 +580,25 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
       // 2. TL;DR Overview Card
       if (/^#{1,4}\s*TL;?DR/i.test(trimmed)) {
         const content = trimmed.replace(/^#{1,4}\s*TL;?DR[:\s-]*/i, '').trim();
-        return (
-          <div key={bIdx} className="ai-companion-tldr-card">
-            <div className="ai-card-badge tldr-badge">
-              <Sparkles size={13} />
-              <span>TL;DR Overview</span>
+        if (content) {
+          return (
+            <div key={bIdx} className="ai-companion-tldr-card">
+              <div className="ai-card-badge tldr-badge">
+                <Sparkles size={13} />
+                <span>TL;DR Overview</span>
+              </div>
+              <p className="ai-tldr-text">{renderInline(content)}</p>
             </div>
-            {content && <p className="ai-tldr-text">{renderInline(content)}</p>}
+          );
+        }
+        return (
+          <div key={bIdx} className="ai-card-badge tldr-badge" style={{ margin: '6px 0' }}>
+            <Sparkles size={13} />
+            <span>TL;DR Overview</span>
           </div>
         );
       }
+
 
       // 3. Main Takeaway Card
       if (/^#{1,4}\s*Main\s+Takeaway/i.test(trimmed) || trimmed.startsWith('>')) {
@@ -826,17 +825,23 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
               <span className="ai-toc-item-page">p. {item.target}</span>
             )}
 
-            <button
-              className={`ai-toc-quick-action ${depth === 0 && hasChildren ? 'chapter-action' : ''}`}
-              title={depth === 0 && hasChildren ? 'Analyze Chapter Roadmap & Overview' : 'Deep Dive this Section'}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleTOCItemSummarize(item);
-              }}
-            >
-              <Sparkles size={15} />
-            </button>
+            {(() => {
+              const isChapterContainer = isChapterOrMajorContainer(item, outline);
+              return (
+                <button
+                  className={`ai-toc-quick-action ${isChapterContainer ? 'chapter-action' : ''}`}
+                  title={isChapterContainer ? 'Analyze Chapter Roadmap & Overview' : 'Deep Dive this Section'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleTOCItemSummarize(item);
+                  }}
+                >
+                  <Sparkles size={15} />
+                </button>
+              );
+            })()}
           </div>
+
 
 
           {hasChildren && isExpanded && (
@@ -1125,7 +1130,86 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
 
 
 
-                {/* 3. Empty text fallback (scanned or image PDF) */}
+                {/* 3. Ready to Generate on Demand (when text is extracted, waiting for user click) */}
+                {!isExtracting && !currentContent && !currentLoading && !currentError && sectionContent && (
+                  <div className="ai-companion-ready-card" style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '36px 20px',
+                    textAlign: 'center',
+                    gap: '14px',
+                    background: 'var(--bg-secondary)',
+                    borderRadius: '20px',
+                    border: '1px solid var(--border)',
+                    margin: '12px 0'
+                  }}>
+                    <div style={{
+                      padding: '16px',
+                      borderRadius: '20px',
+                      background: 'var(--accent-glow, rgba(99, 102, 241, 0.15))',
+                      color: 'var(--accent)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      {activeTab === 'summary' ? (
+                        <FileText size={28} />
+                      ) : activeTab === 'explain' ? (
+                        <Lightbulb size={28} />
+                      ) : (
+                        <HelpCircle size={28} />
+                      )}
+                    </div>
+
+                    <div style={{ maxWidth: '280px' }}>
+                      <h4 style={{ fontSize: '15px', fontWeight: 800, margin: '0 0 6px 0', color: 'var(--text)' }}>
+                        {activeTab === 'summary'
+                          ? (isChapter ? 'Chapter Overview & Roadmap' : 'Generate Section Summary')
+                          : activeTab === 'explain'
+                          ? (isChapter ? 'Explain Chapter Architecture' : 'Generate Technical Explanation')
+                          : (isChapter ? 'Chapter Mastery Quiz' : 'Generate Section Quiz')}
+                      </h4>
+                      <p style={{ fontSize: '12px', color: 'var(--muted)', margin: 0, lineHeight: 1.5 }}>
+                        {activeTab === 'summary'
+                          ? (isChapter ? 'Synthesize architectural roadmap, key topics tree, and chapter motivation.' : 'Extract key takeaways, core points, and a quick TL;DR for this section.')
+                          : activeTab === 'explain'
+                          ? (isChapter ? 'Break down chapter architecture, high-level trade-offs, and system design.' : 'Break down complex concepts, key arguments, and analogies in simple terms.')
+                          : (isChapter ? 'Test your macro understanding with chapter-wide system design questions.' : 'Test your understanding with interactive multiple-choice questions.')}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => streamAction(activeTab)}
+                      className="btn-accent"
+                      style={{
+                        marginTop: '6px',
+                        padding: '10px 22px',
+                        borderRadius: '14px',
+                        fontSize: '13px',
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer',
+                        boxShadow: '0 4px 14px rgba(0,0,0,0.1)'
+                      }}
+                    >
+                      <Sparkles size={14} />
+                      <span>
+                        {activeTab === 'summary'
+                          ? (isChapter ? 'Generate Roadmap' : 'Generate Summary')
+                          : activeTab === 'explain'
+                          ? (isChapter ? 'Explain Architecture' : 'Generate Explanation')
+                          : (isChapter ? 'Start Chapter Quiz' : 'Start Quiz')}
+                      </span>
+                    </button>
+                  </div>
+                )}
+
+                {/* 4. Empty text fallback (scanned or image PDF) */}
                 {!isExtracting && !sectionContent && !currentLoading && (
                   <div className="ai-companion-info-card">
                     <Lightbulb size={20} />
@@ -1139,6 +1223,7 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
                     </div>
                   </div>
                 )}
+
 
                 {/* 4. Error state */}
                 {currentError && (

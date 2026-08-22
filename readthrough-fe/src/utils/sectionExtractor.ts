@@ -50,7 +50,45 @@ export const normalizeTitleForMatching = (title: string): string => {
 };
 
 /**
+ * Determines whether a TOC item represents a Chapter or Major Container
+ * (which requires a Chapter Overview / Roadmap) versus a specific Section / Subsection (which requires Section Deep Dive).
+ */
+export const isChapterOrMajorContainer = (item: any, outline: TocItemData[] = []): boolean => {
+  if (!item) return false;
+
+  const title = (item.title || '').trim();
+
+  // 1. Explicit title prefix: "Chapter 1...", "Part II...", "Ch. 5...", "Chương 1...", "Phần 1..."
+  if (/^(chapter|part|ch\.|chương|phần)\b/i.test(title) || /\b(chapter|part|chương|phần)\s+[\dIVXLCDM]+/i.test(title)) {
+    return true;
+  }
+
+  // 2. Tree structure: if item has children
+  if (item.children && item.children.length > 0) {
+    const isRoot = Array.isArray(outline) && outline.some(root => root === item || (root.title === item.title && root.target === item.target));
+    if (isRoot) return true;
+    const hasGrandchildren = item.children.some((child: any) => child.children && child.children.length > 0);
+    if (hasGrandchildren) return true;
+  }
+
+  // 3. Flat outline structure with `level`
+  if (typeof item.level === 'number' && Array.isArray(outline)) {
+    const idx = outline.indexOf(item);
+    if (idx !== -1 && idx + 1 < outline.length) {
+      const next = outline[idx + 1];
+      if (typeof next.level === 'number' && next.level > item.level) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
+
+/**
  * Finds the ending page for a given start page based on subsequent TOC items,
+
  * and identifies the next section's title for precise page-boundary trimming.
  */
 export const findSectionPageRange = (
