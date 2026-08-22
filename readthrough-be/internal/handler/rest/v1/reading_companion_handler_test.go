@@ -83,6 +83,13 @@ func (m *mockReadingCompanionService) HasCache(ctx context.Context, bookID, sect
 	return false, nil
 }
 
+func (m *mockReadingCompanionService) GetCachedStream(ctx context.Context, bookID, sectionTitle, action, content string) (string, error) {
+	if action == "summary" {
+		return "Cached summary content", nil
+	}
+	return "", nil
+}
+
 func TestReadingCompanionHandler_Summary(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockSvc := &mockReadingCompanionService{}
@@ -171,5 +178,47 @@ func TestReadingCompanionHandler_Quiz(t *testing.T) {
 	}
 	if len(q.Options) != 4 {
 		t.Fatalf("expected 4 options, got %d", len(q.Options))
+	}
+}
+
+func TestReadingCompanionHandler_CheckCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockSvc := &mockReadingCompanionService{}
+	aiCreditManager := middleware.NewAICreditManager([]string{})
+	handler := NewReadingCompanionHandler(mockSvc, aiCreditManager)
+
+	r := gin.New()
+	r.POST("/api/v1/ai/companion/check-cache", handler.CheckCache)
+
+	reqBody, _ := json.Marshal(model.ReadingCompanionRequest{
+		BookID:       "book-123",
+		SectionTitle: "Chapter 1",
+		Action:       "summary",
+		Content:      "Some text content",
+	})
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/companion/check-cache", bytes.NewBuffer(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Succeeded bool `json:"succeeded"`
+		Data      struct {
+			HasCache bool   `json:"has_cache"`
+			Content  string `json:"content"`
+			Action   string `json:"action"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if !resp.Data.HasCache || resp.Data.Content != "Cached summary content" {
+		t.Fatalf("expected has_cache=true and cached content, got %+v", resp.Data)
 	}
 }

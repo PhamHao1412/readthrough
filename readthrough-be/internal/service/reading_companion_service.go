@@ -23,6 +23,7 @@ type IReadingCompanionService interface {
 	ProcessAction(ctx context.Context, req *model.ReadingCompanionRequest) (*model.ReadingCompanionResponse, error)
 	ProcessActionStream(ctx context.Context, req *model.ReadingCompanionRequest, ch chan<- string) error
 	HasCache(ctx context.Context, bookID, sectionTitle, action, content string) (bool, error)
+	GetCachedStream(ctx context.Context, bookID, sectionTitle, action, content string) (string, error)
 }
 
 type ReadingCompanionService struct {
@@ -80,6 +81,24 @@ func (s *ReadingCompanionService) HasCache(ctx context.Context, bookID, sectionT
 		return false, nil
 	}
 	return cached != nil, nil
+}
+
+func (s *ReadingCompanionService) GetCachedStream(ctx context.Context, bookID, sectionTitle, action, content string) (string, error) {
+	if s.companionRepo == nil {
+		return "", nil
+	}
+	contentHash := hashContent(content)
+	// 1. Try stream cache first
+	cachedStream, err := s.companionRepo.Get(ctx, bookID, sectionTitle, action+"_stream", contentHash)
+	if err == nil && cachedStream != nil && cachedStream.ResponseJSON != "" {
+		return cachedStream.ResponseJSON, nil
+	}
+	// 2. Try raw action cache
+	cachedRaw, err := s.companionRepo.Get(ctx, bookID, sectionTitle, action, contentHash)
+	if err == nil && cachedRaw != nil && cachedRaw.ResponseJSON != "" {
+		return cachedRaw.ResponseJSON, nil
+	}
+	return "", nil
 }
 
 func (s *ReadingCompanionService) ProcessAction(ctx context.Context, req *model.ReadingCompanionRequest) (*model.ReadingCompanionResponse, error) {

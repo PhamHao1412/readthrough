@@ -46,6 +46,7 @@ func V1Router(
 		api.POST("/explain", aiHandler.Explain)
 		api.POST("/ai/companion", readingCompanionHandler.CompanionAction)
 		api.POST("/ai/companion/stream", readingCompanionHandler.CompanionActionStream)
+		api.POST("/ai/companion/check-cache", readingCompanionHandler.CheckCache)
 
 		// Auth Routes (Public)
 		auth := api.Group("/auth")

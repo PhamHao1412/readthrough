@@ -117,3 +117,22 @@ func (h *ReadingCompanionHandler) CompanionActionStream(c *gin.Context) {
 		return false
 	})
 }
+
+func (h *ReadingCompanionHandler) CheckCache(c *gin.Context) {
+	var req model.ReadingCompanionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ResponseBadRequest(err))
+		return
+	}
+
+	cachedContent, err := h.companionSvc.GetCachedStream(c.Request.Context(), req.BookID, req.SectionTitle, req.Action, req.Content)
+	if err != nil {
+		log.Printf("[ReadingCompanionHandler] CheckCache error: %v", err)
+	}
+
+	c.JSON(http.StatusOK, dto.ResponseOK(gin.H{
+		"has_cache": cachedContent != "",
+		"content":   cachedContent,
+		"action":    req.Action,
+	}))
+}
