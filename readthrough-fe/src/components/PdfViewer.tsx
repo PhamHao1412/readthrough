@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjs from 'pdfjs-dist';
+// @ts-ignore
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, AlertTriangle, Maximize2 } from 'lucide-react';
 import 'pdfjs-dist/web/pdf_viewer.css';
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+
 
 interface PdfViewerProps {
   bookId: string;
@@ -197,27 +200,77 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
   useEffect(() => {
     let active = true;
     const load = async () => {
+      if (!url) return;
       setLoading(true);
       setError('');
       try {
-        // Use range-based loading: only fetch bytes needed for the current page
-        // instead of downloading the entire PDF file upfront.
+        // Range-based loading: only fetch bytes needed for the current page.
         // - disableAutoFetch: prevents PDF.js from pre-downloading the whole file
         // - disableStream: TRUE → forces range transport (sends Range: bytes=X-Y)
-        //   IMPORTANT: false would use streaming transport = still downloads full file
         // - rangeChunkSize: 512KB per chunk → 8× fewer requests than 64KB default
-        //   Larger chunks = fewer Range requests = less rate limiting risk
-        // - httpHeaders: pass JWT so the authenticated /content endpoint works
         const token = localStorage.getItem('readthrough_access_token');
         const isBlobUrl = url.startsWith('blob:');
-        const doc = await pdfjs.getDocument({
-          url,
-          rangeChunkSize: 524288, // 512KB per range chunk for HTTP streaming
-          disableAutoFetch: !isBlobUrl, // do NOT pre-fetch when using HTTP range streaming
-          disableStream: !isBlobUrl,    // use range transport for HTTP, native memory for blob URLs
-          httpHeaders: (token && !isBlobUrl) ? { Authorization: `Bearer ${token}` } : {},
-          withCredentials: false,
-        }).promise;
+        const isBackendApi = url.startsWith('/api/') || url.includes('/api/v1/');
+
+        // CRITICAL FIX:
+        // Pass Authorization header ONLY to internal backend API (/api/v1/...).
+        // NEVER pass Authorization header to Cloudflare R2 / AWS S3 presigned URLs!
+        // Sending Bearer JWT to S3/R2 presigned URLs triggers "InvalidArgument: Only one auth mechanism allowed"
+        // or CORS preflight rejection, causing newly uploaded PDFs to fail on first open.
+        const httpHeaders: Record<string, string> = {};
+        if (token && isBackendApi && !isBlobUrl) {
+          httpHeaders['Authorization'] = `Bearer ${token}`;
+        }
+
+        let doc: pdfjs.PDFDocumentProxy;
+
+        try {
+          doc = await pdfjs.getDocument({
+            url,
+            cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+            cMapPacked: true,
+            rangeChunkSize: 524288, // 512KB per range chunk for HTTP streaming
+            disableAutoFetch: !isBlobUrl,
+            disableStream: !isBlobUrl,
+            httpHeaders,
+            withCredentials: false,
+          }).promise;
+        } catch (primaryErr: any) {
+          console.warn('[PdfViewer] Primary URL load failed, trying resilient fallback...', primaryErr);
+
+          // Fallback 1: If primary URL was a direct presigned R2/S3 URL, try proxying via backend /content
+          if (!isBackendApi && !isBlobUrl && bookId) {
+            const fallbackHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+            try {
+              doc = await pdfjs.getDocument({
+                url: `/api/v1/books/${bookId}/content`,
+                cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+                cMapPacked: true,
+                rangeChunkSize: 524288,
+                disableAutoFetch: true,
+                disableStream: true,
+                httpHeaders: fallbackHeaders,
+                withCredentials: false,
+              }).promise;
+            } catch (fallbackErr: any) {
+              console.warn('[PdfViewer] Fallback 1 failed, downloading full blob...', fallbackErr);
+              // Fallback 2: Direct full blob fetch via backend proxy
+              const res = await fetch(`/api/v1/books/${bookId}/content`, {
+                headers: fallbackHeaders,
+              });
+              if (!res.ok) throw new Error(`HTTP error ${res.status}: Failed to download PDF`);
+              const arrayBuf = await res.arrayBuffer();
+              doc = await pdfjs.getDocument({
+                data: new Uint8Array(arrayBuf),
+                cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+                cMapPacked: true,
+              }).promise;
+            }
+          } else {
+            throw primaryErr;
+          }
+        }
+
         if (!active) return;
         setPdf(doc);
         if (onPdfLoaded) {
@@ -240,7 +293,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
             setFitScale(fitScaleVal);
           });
         }
-      } catch {
+      } catch (err: any) {
+        console.error('[PdfViewer] Error loading PDF:', err);
         if (active) setError('Failed to open this PDF file. Please check the file.');
       } finally {
         if (active) setLoading(false);
@@ -248,6 +302,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = React.memo(({
     };
     load();
     return () => { active = false; };
+
   }, [url, bookId, computeFitScale]);
 
   // Sync initialPage prop changes

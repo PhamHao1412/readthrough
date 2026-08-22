@@ -78,4 +78,5 @@ type ReadingCompanionRequest struct {
 	BookAuthor   string `json:"book_author"`
 	PageNumber   int    `json:"page_number"`
 	IsChapter    bool   `json:"is_chapter"`
+	Force        bool   `json:"force"`
 }

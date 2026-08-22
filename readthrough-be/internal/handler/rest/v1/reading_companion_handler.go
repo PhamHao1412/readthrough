@@ -34,9 +34,13 @@ func (h *ReadingCompanionHandler) CompanionAction(c *gin.Context) {
 		return
 	}
 
-	hasCache, err := h.companionSvc.HasCache(c.Request.Context(), req.BookID, req.SectionTitle, req.Action, req.Content)
-	if err != nil {
-		log.Printf("[ReadingCompanionHandler] HasCache check error: %v", err)
+	hasCache := false
+	if !req.Force {
+		var err error
+		hasCache, err = h.companionSvc.HasCache(c.Request.Context(), req.BookID, req.SectionTitle, req.Action, req.Content)
+		if err != nil {
+			log.Printf("[ReadingCompanionHandler] HasCache check error: %v", err)
+		}
 	}
 
 	if !hasCache && h.aiCreditManager != nil {
@@ -70,9 +74,13 @@ func (h *ReadingCompanionHandler) CompanionActionStream(c *gin.Context) {
 		return
 	}
 
-	hasCache, err := h.companionSvc.HasCache(c.Request.Context(), req.BookID, req.SectionTitle, req.Action+"_stream", req.Content)
-	if err != nil {
-		log.Printf("[ReadingCompanionHandler] HasCache stream check error: %v", err)
+	hasCache := false
+	if !req.Force {
+		var err error
+		hasCache, err = h.companionSvc.HasCache(c.Request.Context(), req.BookID, req.SectionTitle, req.Action+"_stream", req.Content)
+		if err != nil {
+			log.Printf("[ReadingCompanionHandler] HasCache stream check error: %v", err)
+		}
 	}
 
 	if !hasCache && h.aiCreditManager != nil {

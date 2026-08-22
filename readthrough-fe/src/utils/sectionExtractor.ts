@@ -63,15 +63,12 @@ export const isChapterOrMajorContainer = (item: any, outline: TocItemData[] = []
     return true;
   }
 
-  // 2. Tree structure: if item has children
+  // 2. Tree structure: if item has child sections/topics, it is a Chapter/Container Roadmap
   if (item.children && item.children.length > 0) {
-    const isRoot = Array.isArray(outline) && outline.some(root => root === item || (root.title === item.title && root.target === item.target));
-    if (isRoot) return true;
-    const hasGrandchildren = item.children.some((child: any) => child.children && child.children.length > 0);
-    if (hasGrandchildren) return true;
+    return true;
   }
 
-  // 3. Flat outline structure with `level`
+  // 3. Flat outline structure with `level`: if followed by items with deeper level
   if (typeof item.level === 'number' && Array.isArray(outline)) {
     const idx = outline.indexOf(item);
     if (idx !== -1 && idx + 1 < outline.length) {
@@ -84,6 +81,7 @@ export const isChapterOrMajorContainer = (item: any, outline: TocItemData[] = []
 
   return false;
 };
+
 
 
 /**

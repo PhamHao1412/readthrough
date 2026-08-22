@@ -115,7 +115,7 @@ func (s *ReadingCompanionService) ProcessAction(ctx context.Context, req *model.
 	contentHash := hashContent(trimmedContent)
 
 	// 1. Check DB Cache
-	if s.companionRepo != nil {
+	if !req.Force && s.companionRepo != nil {
 		cached, err := s.companionRepo.Get(ctx, req.BookID, req.SectionTitle, action, contentHash)
 		if err == nil && cached != nil {
 			var resp model.ReadingCompanionResponse
@@ -337,7 +337,7 @@ func (s *ReadingCompanionService) ProcessActionStream(ctx context.Context, req *
 	contentHash := hashContent(trimmedContent)
 
 	// 1. Check DB Cache
-	if s.companionRepo != nil {
+	if !req.Force && s.companionRepo != nil {
 		cached, err := s.companionRepo.Get(ctx, req.BookID, req.SectionTitle, action+"_stream", contentHash)
 		if err == nil && cached != nil && cached.ResponseJSON != "" {
 			log.Printf("[ReadingCompanion] DB Cache Hit (Stream) for book=%s, section=%q, action=%s", req.BookID, req.SectionTitle, action)

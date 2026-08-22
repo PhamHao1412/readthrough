@@ -183,6 +183,7 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
   // Content state per action: action -> accumulated text
   const [contentMap, setContentMap] = useState<Record<string, string>>({});
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
+  const [checkingCacheMap, setCheckingCacheMap] = useState<Record<string, boolean>>({});
   const [errorMap, setErrorMap] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState<boolean>(false);
 
@@ -217,8 +218,13 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
 
   // Track whether an action was attempted for the current section to prevent infinite request loops
   const hasAttemptedRef = useRef<Record<string, boolean>>({});
+  const checkedCacheKeysRef = useRef<Set<string>>(new Set());
 
-  // Reset stream states and quiz answers when switching to a completely new section
+  const getLocalCompanionKey = useCallback((act: string) => {
+    return `readthrough_ai_${bookId}_${sectionTitle || `p_${pageNumber}`}_${act}`;
+  }, [bookId, sectionTitle, pageNumber]);
+
+  // Reset or restore cached states when switching to a section
   useEffect(() => {
     if (prevSectionKeyRef.current !== currentSectionKey) {
       if (abortControllerRef.current) {
@@ -226,8 +232,26 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
         abortControllerRef.current = null;
       }
       prevSectionKeyRef.current = currentSectionKey;
-      setContentMap({});
+      checkedCacheKeysRef.current.clear();
+
+      // Fast synchronous local cache restoration (0ms delay, zero flicker)
+      const localLoaded: Record<string, string> = {};
+      for (const act of ['summary', 'explain', 'quiz'] as const) {
+        try {
+          const cached = localStorage.getItem(`readthrough_ai_${bookId}_${sectionTitle || `p_${pageNumber}`}_${act}`)
+            || localStorage.getItem(`reread_ai_${bookId}_${sectionTitle || `p_${pageNumber}`}_${act}`);
+          if (cached) {
+            localLoaded[act] = cached;
+            checkedCacheKeysRef.current.add(`${bookId}:${sectionTitle || pageNumber}:${act}`);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      setContentMap(localLoaded);
       setLoadingMap({});
+      setCheckingCacheMap({});
       setErrorMap({});
       setUserAnswers({});
       setRevealedExplanations({});
@@ -236,7 +260,8 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
       hasAttemptedRef.current = {};
       userScrolledUpRef.current = false;
     }
-  }, [currentSectionKey]);
+  }, [currentSectionKey, bookId, sectionTitle, pageNumber]);
+
 
 
 
@@ -263,7 +288,7 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
   }, []);
 
   // Streaming action fetcher
-  const streamAction = useCallback(async (action: 'summary' | 'explain' | 'quiz') => {
+  const streamAction = useCallback(async (action: 'summary' | 'explain' | 'quiz', force: boolean = false) => {
     if (!sectionContent || !sectionContent.trim()) {
       return;
     }
@@ -281,6 +306,15 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
     setThinkingElapsed(0);
     userScrolledUpRef.current = false;
     hasAttemptedRef.current[action] = true;
+
+    if (force) {
+      try {
+        localStorage.removeItem(getLocalCompanionKey(action));
+        localStorage.removeItem(`reread_ai_${bookId}_${sectionTitle || `p_${pageNumber}`}_${action}`);
+      } catch {
+        // ignore
+      }
+    }
 
     const streamStartTime = Date.now();
     let firstTokenReceived = false;
@@ -307,8 +341,10 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
           book_author: bookAuthor || 'Author',
           page_number: pageNumber || currentPage || 1,
           is_chapter: isChapter || false,
+          force: force,
         }),
       });
+
 
       if (!res.ok) {
         let errMsg = 'AI Companion service unavailable.';
@@ -406,6 +442,12 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
         throw new Error('AI returned an empty response. Please verify your OpenAI model name and API key.');
       }
 
+      try {
+        localStorage.setItem(getLocalCompanionKey(action), finalText);
+      } catch {
+        // ignore
+      }
+
       setContentMap(prev => ({ ...prev, [action]: finalText }));
 
       if (isCached && scrollContainerRef.current) {
@@ -428,7 +470,65 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
       setLoadingMap(prev => ({ ...prev, [action]: false }));
     }
 
-  }, [bookId, sectionTitle, sectionContent, bookTitle, bookAuthor, pageNumber, currentPage, fetchWithAuth, scrollToBottom]);
+  }, [bookId, sectionTitle, sectionContent, bookTitle, bookAuthor, pageNumber, currentPage, isChapter, fetchWithAuth, scrollToBottom, getLocalCompanionKey]);
+
+  // Silently check and load cached content from database
+  const checkAndLoadCache = useCallback(async (action: 'summary' | 'explain' | 'quiz') => {
+    if (!bookId || !sectionContent || !sectionContent.trim()) return;
+
+    const cacheKey = `${bookId}:${sectionTitle || pageNumber}:${action}`;
+    if (checkedCacheKeysRef.current.has(cacheKey)) return;
+    checkedCacheKeysRef.current.add(cacheKey);
+
+    setCheckingCacheMap(prev => ({ ...prev, [action]: true }));
+    try {
+      const res = await fetchWithAuth('/api/v1/ai/companion/check-cache', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          book_id: bookId,
+          section_title: sectionTitle || `Page ${pageNumber || currentPage}`,
+          content: sectionContent,
+          action,
+        }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.data?.has_cache && json?.data?.content) {
+          try {
+            localStorage.setItem(getLocalCompanionKey(action), json.data.content);
+          } catch {
+            // ignore
+          }
+          setContentMap(prev => {
+            if (prev[action]) return prev;
+            return { ...prev, [action]: json.data.content };
+          });
+        }
+      }
+    } catch {
+      // ignore cache check errors
+    } finally {
+      setCheckingCacheMap(prev => ({ ...prev, [action]: false }));
+    }
+  }, [bookId, sectionTitle, pageNumber, currentPage, sectionContent, fetchWithAuth, getLocalCompanionKey]);
+
+  // When panel switches to companion, active tab changes, or section changes -> check and display existing cache immediately
+  useEffect(() => {
+    if (viewMode !== 'companion' || activeTab === 'vocab' || isExtracting) return;
+    const cacheKey = `${bookId}:${sectionTitle || pageNumber}:${activeTab}`;
+    if (
+      sectionContent &&
+      sectionContent.trim().length > 0 &&
+      !contentMap[activeTab] &&
+      !loadingMap[activeTab] &&
+      !checkedCacheKeysRef.current.has(cacheKey)
+    ) {
+      checkAndLoadCache(activeTab);
+    }
+  }, [viewMode, activeTab, sectionContent, contentMap, loadingMap, isExtracting, checkAndLoadCache, bookId, sectionTitle, pageNumber]);
+
 
 
   // On-demand streaming: user clicks the generate button to start analysis
@@ -1130,8 +1230,30 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
 
 
 
-                {/* 3. Ready to Generate on Demand (when text is extracted, waiting for user click) */}
-                {!isExtracting && !currentContent && !currentLoading && !currentError && sectionContent && (
+                {/* 2.5 Cache Checking State (checking DB cache silently) */}
+                {!isExtracting && !currentContent && !currentLoading && checkingCacheMap[activeTab] && (
+                  <div className="ai-companion-ready-card" style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '40px 20px',
+                    textAlign: 'center',
+                    gap: '14px',
+                    background: 'var(--bg-secondary)',
+                    borderRadius: '20px',
+                    border: '1px solid var(--border)',
+                    margin: '12px 0'
+                  }}>
+                    <div className="spinner" style={{ width: '24px', height: '24px', borderWidth: '2.5px' }} />
+                    <span style={{ fontSize: '13px', color: 'var(--muted)', fontWeight: 600 }}>
+                      Checking saved insights...
+                    </span>
+                  </div>
+                )}
+
+                {/* 3. Ready to Generate on Demand (when text is extracted and no cache exists) */}
+                {!isExtracting && !currentContent && !currentLoading && !currentError && !checkingCacheMap[activeTab] && sectionContent && (
                   <div className="ai-companion-ready-card" style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -1208,6 +1330,7 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
                     </button>
                   </div>
                 )}
+
 
                 {/* 4. Empty text fallback (scanned or image PDF) */}
                 {!isExtracting && !sectionContent && !currentLoading && (
@@ -1447,13 +1570,14 @@ export const AIReadingCompanionPanel: React.FC<AIReadingCompanionPanelProps> = (
                   </button>
                   <button
                     className="ai-panel-regen-btn"
-                    onClick={() => streamAction(activeTab)}
+                    onClick={() => streamAction(activeTab, true)}
                     disabled={currentLoading}
                     title="Regenerate"
                   >
                     <RotateCcw size={13} />
                     <span>Regenerate</span>
                   </button>
+
                 </>
               )}
             </div>
