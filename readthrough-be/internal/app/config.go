@@ -10,12 +10,13 @@ type Config struct {
 	JWTSecret    string `mapstructure:"JWT_SECRET"`
 	UploadDir    string `mapstructure:"UPLOAD_DIR"`
 	// R2 Cloudflare Configuration
-	R2AccessKeyID     string `mapstructure:"R2_ACCESS_KEY_ID"`
-	R2SecretAccessKey string `mapstructure:"R2_SECRET_ACCESS_KEY"`
-	R2AccountID       string `mapstructure:"R2_ACCOUNT_ID"`
-	R2BucketName      string `mapstructure:"R2_BUCKET_NAME"`
-	OpenAIApiKey      string `mapstructure:"OPENAI_API_KEY"`
-	OpenAIModel       string `mapstructure:"OPENAI_MODEL"`
+	R2AccessKeyID      string `mapstructure:"R2_ACCESS_KEY_ID"`
+	R2SecretAccessKey  string `mapstructure:"R2_SECRET_ACCESS_KEY"`
+	R2AccountID        string `mapstructure:"R2_ACCOUNT_ID"`
+	R2BucketName       string `mapstructure:"R2_BUCKET_NAME"`
+	OpenAIApiKey       string `mapstructure:"OPENAI_API_KEY"`
+	OpenAIModel        string `mapstructure:"OPENAI_MODEL"`
+	OpenAISummaryModel string `mapstructure:"OPENAI_SUMMARY_MODEL"`
 	// Rate Limiting Configuration (Token Bucket)
 	RateLimitCapacity float64 `mapstructure:"RATE_LIMIT_CAPACITY"`
 	RateLimitRate     float64 `mapstructure:"RATE_LIMIT_RATE"`

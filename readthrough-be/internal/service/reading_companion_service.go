@@ -28,22 +28,40 @@ type IReadingCompanionService interface {
 type ReadingCompanionService struct {
 	apiKey        string
 	model         string
+	summaryModel  string
 	client        *http.Client
 	companionRepo repository.IAICompanionRepository
 }
 
-func NewReadingCompanionService(apiKey, model string, companionRepo repository.IAICompanionRepository) *ReadingCompanionService {
+func NewReadingCompanionService(apiKey, model, summaryModel string, companionRepo repository.IAICompanionRepository) *ReadingCompanionService {
 	if model == "" {
-		model = "gpt-4o-mini"
+		model = "gpt-5-nano"
+	}
+	if summaryModel == "" {
+		summaryModel = "gpt-4o-mini"
 	}
 	return &ReadingCompanionService{
-		apiKey: apiKey,
-		model:  model,
+		apiKey:       apiKey,
+		model:        model,
+		summaryModel: summaryModel,
 		client: &http.Client{
-			Timeout: 45 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 		companionRepo: companionRepo,
 	}
+}
+
+func (s *ReadingCompanionService) getModelForAction(action string) string {
+	if strings.ToLower(strings.TrimSpace(action)) == "summary" {
+		if s.summaryModel != "" {
+			return s.summaryModel
+		}
+		return "gpt-4o-mini"
+	}
+	if s.model != "" {
+		return s.model
+	}
+	return "gpt-5-nano"
 }
 
 func hashContent(text string) string {
@@ -114,19 +132,23 @@ func (s *ReadingCompanionService) ProcessAction(ctx context.Context, req *model.
 		prompt = fmt.Sprintf(utils.SectionQuizPromptTemplate, req.SectionTitle, bookTitle, bookAuthor, trimmedContent)
 	}
 
-	// 3. Prepare OpenAI Request Body with response_format json_object
+	chosenModel := s.getModelForAction(action)
+
+	// 3. Prepare OpenAI Request Body
 	reqBody := map[string]interface{}{
-		"model": s.model,
+		"model": chosenModel,
 		"messages": []map[string]interface{}{
 			{
 				"role":    "user",
 				"content": prompt,
 			},
 		},
-		"temperature": 0.2,
-		"response_format": map[string]string{
+	}
+	if !strings.Contains(chosenModel, "gpt-5") && !strings.HasPrefix(chosenModel, "o1") && !strings.HasPrefix(chosenModel, "o3") {
+		reqBody["temperature"] = 0.2
+		reqBody["response_format"] = map[string]string{
 			"type": "json_object",
-		},
+		}
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)
@@ -336,9 +358,11 @@ func (s *ReadingCompanionService) ProcessActionStream(ctx context.Context, req *
 		}
 	}
 
+	chosenModel := s.getModelForAction(action)
+
 	// 3. Build Stream Request Body
 	reqBody := map[string]interface{}{
-		"model": s.model,
+		"model": chosenModel,
 		"messages": []map[string]interface{}{
 			{
 				"role":    "user",

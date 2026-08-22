@@ -104,7 +104,7 @@ func main() {
 	translateSvc := service.NewTranslateService()
 
 	aiSvc := service.NewAIService(cfg.OpenAIApiKey, cfg.OpenAIModel, aiExplanationRepo)
-	readingCompanionSvc := service.NewReadingCompanionService(cfg.OpenAIApiKey, cfg.OpenAIModel, aiCompanionRepo)
+	readingCompanionSvc := service.NewReadingCompanionService(cfg.OpenAIApiKey, cfg.OpenAIModel, cfg.OpenAISummaryModel, aiCompanionRepo)
 	vocabSvc := service.NewVocabularyService(vocabRepo)
 	authSvc := service.NewAuthService(userRepo, tokenRepo)
 	bookmarkSvc := service.NewBookmarkService(bookmarkRepo)
