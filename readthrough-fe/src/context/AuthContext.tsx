@@ -16,7 +16,12 @@ interface AuthContextType {
   fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
 }
 
-export const API_BASE = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/+$/, '');
+export const API_BASE = (
+  (import.meta as any).env?.VITE_API_BASE_URL ||
+  (import.meta as any).env?.VITE_API_URL ||
+  ''
+).replace(/\/+$/, '');
+
 
 export const formatUrl = (path: string): string => {
   if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('blob:')) {
